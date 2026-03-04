@@ -9,9 +9,15 @@ contextBridge.exposeInMainWorld("lanTunnel", {
   listItems: () => ipcRenderer.invoke("items:list"),
   saveFile: (itemId) => ipcRenderer.invoke("items:saveFile", itemId),
   writeClipboard: (text) => ipcRenderer.invoke("clipboard:writeText", text),
+  listPeers: () => ipcRenderer.invoke("peers:list"),
   onIncomingItem: (handler) => {
     const listener = (_event, item) => handler(item);
     ipcRenderer.on("incoming:item", listener);
     return () => ipcRenderer.removeListener("incoming:item", listener);
+  },
+  onPeersUpdated: (handler) => {
+    const listener = (_event, peers) => handler(peers);
+    ipcRenderer.on("peers:updated", listener);
+    return () => ipcRenderer.removeListener("peers:updated", listener);
   },
 });

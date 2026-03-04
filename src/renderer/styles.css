@@ -162,6 +162,13 @@ body {
   color: var(--muted);
 }
 
+.overlay-panel h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
 .hidden {
   display: none;
 }
@@ -189,6 +196,7 @@ input {
 }
 
 .local-url-list,
+.peer-list,
 .received-list {
   list-style: none;
   margin: 0;
@@ -198,6 +206,7 @@ input {
 }
 
 .url-item,
+.peer-item,
 .received-item {
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -209,6 +218,30 @@ input {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.peer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.peer-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.peer-name {
+  font-size: 11px;
+  color: var(--text);
+}
+
+.peer-endpoint {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .url-item code {

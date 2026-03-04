@@ -3,6 +3,7 @@ const fs = require("node:fs/promises");
 const { app, BrowserWindow, ipcMain, dialog, clipboard } = require("electron");
 const { encryptBuffer, keyFingerprint } = require("./crypto");
 const { startServer } = require("./server");
+const { startDiscovery } = require("./discovery");
 const { getReceivedItem, listReceivedItems } = require("./store");
 
 const PORT = 43827;
@@ -12,6 +13,8 @@ const state = {
 
 let mainWindow;
 let localUrls = [];
+let discoveryHandle;
+let discoveredPeers = [];
 
 function normalizePeerUrl(input) {
   if (!input || typeof input !== "string") {
@@ -87,6 +90,18 @@ app.whenReady().then(() => {
   });
 
   localUrls = serverUrls;
+
+  discoveryHandle = startDiscovery({
+    endpointProvider: () =>
+      localUrls.find((url) => !url.includes("localhost")) || localUrls[0],
+    onPeersChange: (peers) => {
+      discoveredPeers = peers;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("peers:updated", peers);
+      }
+    },
+  });
+
   createWindow();
 
   app.on("activate", () => {
@@ -97,6 +112,9 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  if (discoveryHandle) {
+    discoveryHandle.stop();
+  }
   if (process.platform !== "darwin") {
     app.quit();
   }
@@ -113,6 +131,7 @@ ipcMain.handle("app:info", () => {
   return {
     port: PORT,
     localUrls,
+    peers: discoveredPeers,
   };
 });
 
@@ -178,4 +197,11 @@ ipcMain.handle("items:saveFile", async (_event, itemId) => {
 ipcMain.handle("clipboard:writeText", (_event, text) => {
   clipboard.writeText(String(text || ""));
   return { ok: true };
+});
+
+ipcMain.handle("peers:list", () => {
+  if (discoveryHandle) {
+    discoveredPeers = discoveryHandle.getPeers();
+  }
+  return discoveredPeers;
 });

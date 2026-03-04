@@ -6,10 +6,12 @@ const copyEndpointBtn = document.getElementById("copyEndpointBtn");
 const setupPanel = document.getElementById("setupContent");
 const receivedPanel = document.getElementById("receivedPanel");
 const localUrlList = document.getElementById("localUrlList");
+const peerList = document.getElementById("peerList");
 const dropZone = document.getElementById("dropZone");
 const statusEl = document.getElementById("status");
 const receivedList = document.getElementById("receivedList");
 let endpoints = [];
+let peers = [];
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -24,6 +26,45 @@ function formatBytes(size) {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function renderPeers() {
+  peerList.innerHTML = "";
+  if (!peers.length) {
+    const li = document.createElement("li");
+    li.className = "peer-item";
+    li.innerHTML = '<div class="peer-main"><div class="peer-endpoint">No nearby devices yet.</div></div>';
+    peerList.appendChild(li);
+    return;
+  }
+
+  for (const peer of peers) {
+    const li = document.createElement("li");
+    li.className = "peer-item";
+
+    const main = document.createElement("div");
+    main.className = "peer-main";
+    const name = document.createElement("div");
+    name.className = "peer-name";
+    name.textContent = peer.name;
+    const endpoint = document.createElement("div");
+    endpoint.className = "peer-endpoint";
+    endpoint.textContent = peer.endpoint;
+    main.appendChild(name);
+    main.appendChild(endpoint);
+    li.appendChild(main);
+
+    const pairBtn = document.createElement("button");
+    pairBtn.className = "mini-btn";
+    pairBtn.textContent = "Pair";
+    pairBtn.addEventListener("click", () => {
+      peerUrlInput.value = peer.endpoint;
+      setStatus(`Paired to ${peer.name}`);
+    });
+    li.appendChild(pairBtn);
+
+    peerList.appendChild(li);
+  }
 }
 
 async function renderReceivedItems() {
@@ -191,11 +232,18 @@ window.lanTunnel.onIncomingItem(() => {
   setStatus("Incoming item received.");
 });
 
+window.lanTunnel.onPeersUpdated((nextPeers) => {
+  peers = nextPeers || [];
+  renderPeers();
+});
+
 async function init() {
   const appInfo = await window.lanTunnel.appInfo();
   endpoints = appInfo.localUrls;
+  peers = appInfo.peers || [];
   setupPanel.classList.add("hidden");
   receivedPanel.classList.add("hidden");
+  renderPeers();
   localUrlList.innerHTML = "";
   for (const url of endpoints) {
     const li = document.createElement("li");
@@ -218,6 +266,8 @@ async function init() {
   }
 
   await renderReceivedItems();
+  peers = await window.lanTunnel.listPeers();
+  renderPeers();
   setStatus("Ready for paste or drop.");
 }
 
