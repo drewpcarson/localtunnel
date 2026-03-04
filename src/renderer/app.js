@@ -291,6 +291,12 @@ window.lanTunnel.onPaired(({ peerUrl, peerName }) => {
   setPairStatus(`Paired with ${peerName || "peer"}`);
 });
 
+window.lanTunnel.onPairingCleared(({ reason }) => {
+  peerUrlInput.value = "";
+  setPairStatus("Not paired");
+  setStatus(reason || "Pairing cleared.", true);
+});
+
 pairAcceptBtn.addEventListener("click", async () => {
   if (!currentPairRequest) {
     return;

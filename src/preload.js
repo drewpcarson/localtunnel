@@ -38,4 +38,9 @@ contextBridge.exposeInMainWorld("lanTunnel", {
     ipcRenderer.on("pairing:paired", listener);
     return () => ipcRenderer.removeListener("pairing:paired", listener);
   },
+  onPairingCleared: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("pairing:cleared", listener);
+    return () => ipcRenderer.removeListener("pairing:cleared", listener);
+  },
 });

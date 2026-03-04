@@ -3,7 +3,15 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  clipboard,
+  nativeImage,
+  safeStorage,
+} = require("electron");
 const { encryptBuffer, keyFingerprint } = require("./crypto");
 const { startServer } = require("./server");
 const { startDiscovery } = require("./discovery");
@@ -25,6 +33,7 @@ let discoveredPeers = [];
 const outgoingPairRequests = new Map();
 const incomingPairRequests = new Map();
 const dragExportDir = path.join(os.tmpdir(), "lan-paste-tunnel");
+let pairingStatePath = "";
 
 function normalizePeerUrl(input) {
   if (!input || typeof input !== "string") {
@@ -55,6 +64,9 @@ async function sendEncryptedJson(url, endpoint, body, sharedKey) {
       message = data.error || message;
     } catch (_error) {
       // No-op: fallback to status code text.
+    }
+    if (message === "Set a shared key first.") {
+      throw new Error("Peer is not paired. Re-pair both portals.");
     }
     throw new Error(message);
   }
@@ -87,13 +99,96 @@ function notifyRenderer(channel, payload) {
   }
 }
 
+function persistPairingState() {
+  if (!pairingStatePath) {
+    return;
+  }
+
+  if (!state.activePeerUrl || !state.sharedKey) {
+    if (fsSync.existsSync(pairingStatePath)) {
+      fsSync.unlinkSync(pairingStatePath);
+    }
+    return;
+  }
+
+  const payload = JSON.stringify({
+    activePeerUrl: state.activePeerUrl,
+    activePeerName: state.activePeerName,
+    sharedKey: state.sharedKey,
+    updatedAt: Date.now(),
+  });
+
+  let fileData;
+  if (safeStorage.isEncryptionAvailable()) {
+    const encrypted = safeStorage.encryptString(payload);
+    fileData = JSON.stringify({
+      encrypted: true,
+      data: encrypted.toString("base64"),
+    });
+  } else {
+    fileData = JSON.stringify({
+      encrypted: false,
+      data: Buffer.from(payload, "utf8").toString("base64"),
+    });
+  }
+
+  fsSync.writeFileSync(pairingStatePath, fileData, "utf8");
+}
+
+function restorePairingState() {
+  if (!pairingStatePath || !fsSync.existsSync(pairingStatePath)) {
+    return;
+  }
+
+  try {
+    const raw = fsSync.readFileSync(pairingStatePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const blob = Buffer.from(String(parsed.data || ""), "base64");
+    if (!blob.length) {
+      return;
+    }
+
+    let payload = "";
+    if (parsed.encrypted) {
+      if (!safeStorage.isEncryptionAvailable()) {
+        return;
+      }
+      payload = safeStorage.decryptString(blob);
+    } else {
+      payload = blob.toString("utf8");
+    }
+
+    const restored = JSON.parse(payload);
+    if (!restored.activePeerUrl || !restored.sharedKey) {
+      return;
+    }
+
+    state.activePeerUrl = normalizePeerUrl(restored.activePeerUrl);
+    state.activePeerName = String(restored.activePeerName || "Peer");
+    state.sharedKey = String(restored.sharedKey || "");
+  } catch (_error) {
+    // Ignore invalid persisted state and continue unpaired.
+  }
+}
+
 function setActivePairingSession({ peerUrl, peerName, sharedKey }) {
   state.activePeerUrl = normalizePeerUrl(peerUrl);
   state.activePeerName = String(peerName || "Peer");
   state.sharedKey = String(sharedKey || "");
+  persistPairingState();
   notifyRenderer("pairing:paired", {
     peerUrl: state.activePeerUrl,
     peerName: state.activePeerName,
+  });
+}
+
+function clearPairingSession(reason) {
+  state.sharedKey = "";
+  state.activePeerUrl = "";
+  state.activePeerName = "";
+  persistPairingState();
+  notifyRenderer("pairing:cleared", {
+    reason: reason || "Pairing cleared.",
   });
 }
 
@@ -118,6 +213,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  pairingStatePath = path.join(app.getPath("userData"), "pairing-state.json");
+  restorePairingState();
+
   const { localUrls: serverUrls } = startServer({
     port: PORT,
     getSharedKey: () => state.sharedKey,
@@ -229,7 +327,14 @@ ipcMain.handle("transfer:sendText", async (_event, { peerUrl, text }) => {
 
   const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
   const payload = encryptBuffer(Buffer.from(text, "utf8"), sharedKey);
-  await sendEncryptedJson(url, "/api/receive-text", { payload }, sharedKey);
+  try {
+    await sendEncryptedJson(url, "/api/receive-text", { payload }, sharedKey);
+  } catch (error) {
+    if (error.message === "Peer is not paired. Re-pair both portals.") {
+      clearPairingSession(error.message);
+    }
+    throw error;
+  }
   return { ok: true };
 });
 
@@ -246,16 +351,23 @@ ipcMain.handle("transfer:sendFile", async (_event, { peerUrl, file }) => {
   const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
   const bytes = Buffer.from(file.bytes);
   const payload = encryptBuffer(bytes, sharedKey);
-  await sendEncryptedJson(
-    url,
-    "/api/receive-file",
-    {
-      payload,
-      fileName: file.name,
-      mimeType: file.mimeType || "application/octet-stream",
-    },
-    sharedKey
-  );
+  try {
+    await sendEncryptedJson(
+      url,
+      "/api/receive-file",
+      {
+        payload,
+        fileName: file.name,
+        mimeType: file.mimeType || "application/octet-stream",
+      },
+      sharedKey
+    );
+  } catch (error) {
+    if (error.message === "Peer is not paired. Re-pair both portals.") {
+      clearPairingSession(error.message);
+    }
+    throw error;
+  }
   return { ok: true };
 });
 
