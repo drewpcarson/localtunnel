@@ -39,11 +39,11 @@
   },
   "dependencies": {
     "cors": "^2.8.6",
-    "electron": "^40.7.0",
     "express": "^5.2.1",
     "ws": "^8.19.0"
   },
   "devDependencies": {
+    "electron": "^40.7.0",
     "electron-builder": "^24.13.3"
   }
 }
