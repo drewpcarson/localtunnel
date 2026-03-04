@@ -35,6 +35,37 @@ const incomingPairRequests = new Map();
 const dragExportDir = path.join(os.tmpdir(), "lan-paste-tunnel");
 let pairingStatePath = "";
 
+function sanitizeFileName(name, fallback) {
+  const base = String(name || "").trim() || fallback;
+  const cleaned = base
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 160);
+  return cleaned || fallback;
+}
+
+function buildDragIconFromItem(item) {
+  if (item.mimeType?.startsWith("image/")) {
+    try {
+      const imageIcon = nativeImage.createFromBuffer(item.bytes);
+      if (!imageIcon.isEmpty()) {
+        return imageIcon.resize({ width: 64, height: 64 });
+      }
+    } catch (_error) {
+      // Fall back to generated icon.
+    }
+  }
+
+  // Windows Explorer drag can crash with an empty icon; always provide a valid one.
+  return nativeImage.createFromDataURL(
+    "data:image/png;base64,"
+      + "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAQAAAAAYLlVAAAAm0lEQVR4Ae3PAQ0AAAgDINc/9K3h"
+      + "HBQAAAB8YgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBA"
+      + "gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB"
+      + "AgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAvwF8QAB2SGINwAAAABJRU5ErkJggg=="
+  );
+}
+
 function normalizePeerUrl(input) {
   if (!input || typeof input !== "string") {
     throw new Error("Peer URL is required.");
@@ -403,18 +434,14 @@ ipcMain.on("items:startDrag", (event, itemId) => {
       fsSync.mkdirSync(dragExportDir, { recursive: true });
     }
 
-    const safeName = path.basename(item.fileName || `file-${item.id}`);
+    const safeName = sanitizeFileName(
+      path.basename(item.fileName || ""),
+      `file-${item.id}`
+    );
     const targetPath = path.join(dragExportDir, `${item.id}-${safeName}`);
     fsSync.writeFileSync(targetPath, item.bytes);
 
-    let icon = nativeImage.createEmpty();
-    if (item.mimeType?.startsWith("image/")) {
-      try {
-        icon = nativeImage.createFromBuffer(item.bytes);
-      } catch (_error) {
-        icon = nativeImage.createEmpty();
-      }
-    }
+    const icon = buildDragIconFromItem(item);
 
     event.sender.startDrag({
       file: targetPath,
