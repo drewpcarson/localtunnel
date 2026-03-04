@@ -179,7 +179,7 @@ function renderOrbitArtifacts() {
       doc.className = "artifact text";
       doc.title = "Copy text to clipboard";
       doc.draggable = true;
-      doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" />';
+      doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" draggable="false" />';
       doc.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
         lastTextDragAt = Date.now();

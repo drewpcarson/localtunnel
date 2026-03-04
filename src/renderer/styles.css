@@ -180,6 +180,9 @@ body {
   width: 42px;
   height: 52px;
   display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .artifact-shell {

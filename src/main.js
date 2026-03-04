@@ -737,7 +737,12 @@ ipcMain.on("items:startDrag", (event, itemId) => {
     }
     const exported = exportDragFile(item);
 
-    const icon = buildDragIconFromItem(item);
+    let icon = nativeImage.createFromPath(exported.path);
+    if (icon.isEmpty()) {
+      icon = buildDragIconFromItem(item);
+    } else {
+      icon = icon.resize({ width: 64, height: 64 });
+    }
     logDragDebug("drag.startDrag.before", {
       itemId: item.id,
       targetPath: exported.path,
