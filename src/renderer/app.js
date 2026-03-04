@@ -10,6 +10,7 @@ const pairRequestText = document.getElementById("pairRequestText");
 const pairAcceptBtn = document.getElementById("pairAcceptBtn");
 const pairDeclineBtn = document.getElementById("pairDeclineBtn");
 const checkUpdatesBtn = document.getElementById("checkUpdatesBtn");
+const appVersionLabel = document.getElementById("appVersionLabel");
 
 let peers = [];
 let receivedItems = [];
@@ -156,6 +157,15 @@ function markWindowDropAllowed(event, stopPropagation = false) {
   dropZone.classList.add("drag-over");
 }
 
+function appendPinwheelMask(target, remainingRatio) {
+  const progressRatio = Math.max(0, 1 - remainingRatio);
+  const mask = document.createElement("div");
+  mask.className = "artifact-progress-mask";
+  mask.style.setProperty("--life-ratio", String(remainingRatio));
+  mask.style.setProperty("--life-progress", String(progressRatio));
+  target.appendChild(mask);
+}
+
 function renderOrbitArtifacts() {
   orbitLayer.innerHTML = "";
   receivedItems = receivedItems.filter(isItemAlive);
@@ -182,10 +192,6 @@ function renderOrbitArtifacts() {
 
     const elapsedMs = Math.max(0, Date.now() - item.createdAt);
     const remainingRatio = Math.max(0, 1 - elapsedMs / ARTIFACT_LIFETIME_MS);
-    const ring = document.createElement("div");
-    ring.className = "lifespan-ring";
-    ring.style.setProperty("--life-ratio", String(remainingRatio));
-    shell.appendChild(ring);
 
     if (item.type === "text") {
       const doc = document.createElement("button");
@@ -222,6 +228,7 @@ function renderOrbitArtifacts() {
         await window.lanTunnel.writeClipboard(item.text || item.textPreview || "");
         setStatus("Text artifact copied.");
       });
+      appendPinwheelMask(doc, remainingRatio);
       shell.appendChild(doc);
     } else if (item.isImage && item.previewDataUrl) {
       const wrap = document.createElement("div");
@@ -255,6 +262,7 @@ function renderOrbitArtifacts() {
           void dismissItemFromUi(item.id);
         }
       });
+      appendPinwheelMask(wrap, remainingRatio);
       shell.appendChild(wrap);
     } else {
       const generic = document.createElement("div");
@@ -287,6 +295,7 @@ function renderOrbitArtifacts() {
           void dismissItemFromUi(item.id);
         }
       });
+      appendPinwheelMask(generic, remainingRatio);
       shell.appendChild(generic);
     }
 
@@ -631,6 +640,7 @@ async function init() {
   const appInfo = await window.lanTunnel.appInfo();
   peers = appInfo.peers || [];
   activePeerUrl = appInfo.activePeerUrl || "";
+  appVersionLabel.textContent = `Version: v${appInfo.appVersion || "unknown"}`;
   const windowsIntegrityLevel = String(appInfo.windowsIntegrityLevel || "");
   updatesEnabled = Boolean(appInfo.updatesEnabled);
 
