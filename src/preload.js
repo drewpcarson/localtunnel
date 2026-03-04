@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("lanTunnel", {
   listItems: () => ipcRenderer.invoke("items:list"),
   saveFile: (itemId) => ipcRenderer.invoke("items:saveFile", itemId),
   startFileDrag: (itemId) => ipcRenderer.send("items:startDrag", itemId),
+  debugLog: (payload) => ipcRenderer.send("debug:log", payload),
   writeClipboard: (text) => ipcRenderer.invoke("clipboard:writeText", text),
   listPeers: () => ipcRenderer.invoke("peers:list"),
   requestPairing: (payload) => ipcRenderer.invoke("pairing:request", payload),
@@ -42,5 +43,10 @@ contextBridge.exposeInMainWorld("lanTunnel", {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("pairing:cleared", listener);
     return () => ipcRenderer.removeListener("pairing:cleared", listener);
+  },
+  onRecoveryStatus: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("app:recoveryStatus", listener);
+    return () => ipcRenderer.removeListener("app:recoveryStatus", listener);
   },
 });

@@ -17,6 +17,29 @@ let endpoints = [];
 let peers = [];
 let receivedItems = [];
 let currentPairRequest = null;
+const DRAG_DEBUG_TAG = "[LT-DRAGDBG]";
+const debugLastAt = new Map();
+
+function debugLog(message, context = {}, debounceMs = 0) {
+  const now = Date.now();
+  if (debounceMs > 0) {
+    const key = `${message}:${context?.key || ""}`;
+    const last = debugLastAt.get(key) || 0;
+    if (now - last < debounceMs) {
+      return;
+    }
+    debugLastAt.set(key, now);
+  }
+  const payload = {
+    message,
+    ...context,
+    ts: new Date(now).toISOString(),
+  };
+  console.log(`${DRAG_DEBUG_TAG} ${message}`, payload);
+  if (window.lanTunnel?.debugLog) {
+    window.lanTunnel.debugLog(payload);
+  }
+}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -54,13 +77,21 @@ function artifactVarsFor(item, index) {
 }
 
 async function refreshReceivedArtifacts() {
+  debugLog("artifacts.refresh.start");
   receivedItems = await window.lanTunnel.listItems();
+  debugLog("artifacts.refresh.done", {
+    count: receivedItems.length,
+  });
   renderOrbitArtifacts();
 }
 
 function renderOrbitArtifacts() {
   orbitLayer.innerHTML = "";
   const visible = receivedItems.slice(0, 14);
+  debugLog("artifacts.render", {
+    total: receivedItems.length,
+    visible: visible.length,
+  });
 
   for (const [index, item] of visible.entries()) {
     const orbitItem = document.createElement("div");
@@ -89,6 +120,10 @@ function renderOrbitArtifacts() {
         </svg>
       `;
       doc.addEventListener("click", async () => {
+        debugLog("artifact.text.click-copy", {
+          itemId: item.id,
+          textLength: (item.text || item.textPreview || "").length,
+        });
         await window.lanTunnel.writeClipboard(item.text || item.textPreview || "");
         setStatus("Text artifact copied.");
       });
@@ -104,7 +139,16 @@ function renderOrbitArtifacts() {
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
+        debugLog("artifact.image.dragstart", {
+          itemId: item.id,
+          fileName: item.fileName,
+          mimeType: item.mimeType,
+          preview: Boolean(item.previewDataUrl),
+        });
         window.lanTunnel.startFileDrag(item.id);
+      });
+      wrap.addEventListener("dragend", () => {
+        debugLog("artifact.image.dragend", { itemId: item.id });
       });
       orbitItem.appendChild(wrap);
     } else {
@@ -117,7 +161,15 @@ function renderOrbitArtifacts() {
       generic.title = `${name} - drag out to desktop`;
       generic.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
+        debugLog("artifact.file.dragstart", {
+          itemId: item.id,
+          fileName: item.fileName,
+          mimeType: item.mimeType,
+        });
         window.lanTunnel.startFileDrag(item.id);
+      });
+      generic.addEventListener("dragend", () => {
+        debugLog("artifact.file.dragend", { itemId: item.id });
       });
       orbitItem.appendChild(generic);
     }
@@ -186,6 +238,11 @@ async function sendText(text) {
 
 async function sendFile(file) {
   try {
+    debugLog("transfer.send-file.start", {
+      name: file?.name,
+      type: file?.type,
+      size: file?.size,
+    });
     const bytes = new Uint8Array(await file.arrayBuffer());
     await window.lanTunnel.sendFile({
       peerUrl: peerUrlInput.value,
@@ -196,7 +253,14 @@ async function sendFile(file) {
       },
     });
     setStatus(`File tunneled: ${file.name}`);
+    debugLog("transfer.send-file.success", {
+      name: file?.name,
+      bytes: bytes.length,
+    });
   } catch (error) {
+    debugLog("transfer.send-file.error", {
+      error: error?.message || String(error),
+    });
     setStatus(error.message || "Failed to send file.", true);
   }
 }
@@ -237,17 +301,22 @@ window.addEventListener("paste", async (event) => {
 dropZone.addEventListener("dragover", (event) => {
   event.preventDefault();
   dropZone.classList.add("drag-over");
+  debugLog("dropzone.dragover", { key: "dropzone" }, 400);
 });
 
 window.addEventListener("dragleave", (event) => {
   if (!event.relatedTarget) {
     dropZone.classList.remove("drag-over");
+    debugLog("dropzone.dragleave-window", { key: "dropzone" }, 400);
   }
 });
 
 dropZone.addEventListener("drop", async (event) => {
   event.preventDefault();
   dropZone.classList.remove("drag-over");
+  debugLog("dropzone.drop", {
+    fileCount: event.dataTransfer?.files?.length || 0,
+  });
 
   const file = event.dataTransfer?.files?.[0];
   if (file) {
@@ -262,6 +331,7 @@ dropZone.addEventListener("drop", async (event) => {
 });
 
 window.lanTunnel.onIncomingItem(async () => {
+  debugLog("incoming.item.event");
   await refreshReceivedArtifacts();
   setStatus("Artifact arrived.");
 });
@@ -279,6 +349,10 @@ window.lanTunnel.onPairingIncomingRequest((request) => {
 });
 
 window.lanTunnel.onPairingStatus((status) => {
+  debugLog("pairing.status", {
+    type: status?.type,
+    message: status?.message,
+  });
   if (status?.message) {
     setStatus(status.message, status.type === "rejected" || status.type === "timeout");
   }
@@ -295,6 +369,13 @@ window.lanTunnel.onPairingCleared(({ reason }) => {
   peerUrlInput.value = "";
   setPairStatus("Not paired");
   setStatus(reason || "Pairing cleared.", true);
+});
+
+window.lanTunnel.onRecoveryStatus((payload) => {
+  debugLog("recovery.status", payload || {});
+  if (payload?.message) {
+    setStatus(payload.message, payload.severity === "error");
+  }
 });
 
 pairAcceptBtn.addEventListener("click", async () => {
@@ -334,6 +415,7 @@ pairDeclineBtn.addEventListener("click", async () => {
 });
 
 async function init() {
+  debugLog("init.start");
   const appInfo = await window.lanTunnel.appInfo();
   endpoints = appInfo.localUrls;
   peers = appInfo.peers || [];
@@ -369,6 +451,10 @@ async function init() {
   peers = await window.lanTunnel.listPeers();
   renderPeers();
   setStatus("Ready for paste, drop, and drift.");
+  debugLog("init.ready", {
+    peerCount: peers.length,
+    endpointCount: endpoints.length,
+  });
 }
 
 init();

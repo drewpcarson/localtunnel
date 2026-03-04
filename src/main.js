@@ -34,6 +34,99 @@ const outgoingPairRequests = new Map();
 const incomingPairRequests = new Map();
 const dragExportDir = path.join(os.tmpdir(), "lan-paste-tunnel");
 let pairingStatePath = "";
+const DRAG_DEBUG_TAG = "[LT-DRAGDBG]";
+const RECOVERY_FILE = "recovery-state.json";
+const RECOVERY_WINDOW_MS = 5 * 60 * 1000;
+const MAX_RECOVERY_RESTARTS = 3;
+let recoveryStatePath = "";
+
+function logDragDebug(message, context = {}) {
+  const stamp = new Date().toISOString();
+  console.log(`${DRAG_DEBUG_TAG} ${stamp} ${message}`, context);
+}
+
+function readRecoveryState() {
+  try {
+    if (!recoveryStatePath || !fsSync.existsSync(recoveryStatePath)) {
+      return { starts: [] };
+    }
+    const raw = fsSync.readFileSync(recoveryStatePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed.starts)) {
+      return { starts: [] };
+    }
+    return { starts: parsed.starts.filter((n) => Number.isFinite(n)) };
+  } catch (_error) {
+    return { starts: [] };
+  }
+}
+
+function writeRecoveryState(stateData) {
+  if (!recoveryStatePath) {
+    return;
+  }
+  fsSync.writeFileSync(recoveryStatePath, JSON.stringify(stateData), "utf8");
+}
+
+function shouldAttemptRecovery(reason) {
+  const now = Date.now();
+  const stateData = readRecoveryState();
+  const recent = stateData.starts.filter((ts) => now - ts <= RECOVERY_WINDOW_MS);
+  const allowed = recent.length < MAX_RECOVERY_RESTARTS;
+  logDragDebug("recovery.check", {
+    reason,
+    recentRestartCount: recent.length,
+    maxRestarts: MAX_RECOVERY_RESTARTS,
+    windowMs: RECOVERY_WINDOW_MS,
+    allowed,
+  });
+  if (!allowed) {
+    return false;
+  }
+  recent.push(now);
+  writeRecoveryState({ starts: recent });
+  return true;
+}
+
+function resetRecoveryWindowIfStable() {
+  const stateData = readRecoveryState();
+  const now = Date.now();
+  const recent = stateData.starts.filter((ts) => now - ts <= RECOVERY_WINDOW_MS);
+  if (recent.length === 0) {
+    return;
+  }
+  writeRecoveryState({ starts: recent });
+}
+
+function tryRelaunch(reason, details = {}) {
+  if (!shouldAttemptRecovery(reason)) {
+    logDragDebug("recovery.blocked", {
+      reason,
+      ...details,
+    });
+    notifyRenderer("app:recoveryStatus", {
+      severity: "error",
+      message: "Automatic recovery disabled after repeated crashes.",
+      reason,
+      details,
+    });
+    return;
+  }
+
+  logDragDebug("recovery.relaunching", {
+    reason,
+    ...details,
+  });
+  try {
+    app.relaunch();
+    app.exit(0);
+  } catch (error) {
+    logDragDebug("recovery.relaunch-error", {
+      reason,
+      error: error?.message || String(error),
+    });
+  }
+}
 
 function sanitizeFileName(name, fallback) {
   const base = String(name || "").trim() || fallback;
@@ -49,21 +142,40 @@ function buildDragIconFromItem(item) {
     try {
       const imageIcon = nativeImage.createFromBuffer(item.bytes);
       if (!imageIcon.isEmpty()) {
-        return imageIcon.resize({ width: 64, height: 64 });
+        const resized = imageIcon.resize({ width: 64, height: 64 });
+        logDragDebug("icon.from-image.success", {
+          itemId: item.id,
+          sourceBytes: item.bytes.length,
+          resizedSize: resized.getSize(),
+        });
+        return resized;
       }
+      logDragDebug("icon.from-image.empty", {
+        itemId: item.id,
+        sourceBytes: item.bytes.length,
+      });
     } catch (_error) {
-      // Fall back to generated icon.
+      logDragDebug("icon.from-image.error", {
+        itemId: item.id,
+        error: _error?.message || String(_error),
+      });
     }
   }
 
   // Windows Explorer drag can crash with an empty icon; always provide a valid one.
-  return nativeImage.createFromDataURL(
+  const fallback = nativeImage.createFromDataURL(
     "data:image/png;base64,"
       + "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAQAAAAAYLlVAAAAm0lEQVR4Ae3PAQ0AAAgDINc/9K3h"
       + "HBQAAAB8YgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBA"
       + "gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB"
       + "AgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAvwF8QAB2SGINwAAAABJRU5ErkJggg=="
   );
+  logDragDebug("icon.fallback.generated", {
+    itemId: item.id,
+    size: fallback.getSize(),
+    isEmpty: fallback.isEmpty(),
+  });
+  return fallback;
 }
 
 function normalizePeerUrl(input) {
@@ -244,6 +356,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  recoveryStatePath = path.join(app.getPath("userData"), RECOVERY_FILE);
+  resetRecoveryWindowIfStable();
+  logDragDebug("app.ready", { platform: process.platform });
   pairingStatePath = path.join(app.getPath("userData"), "pairing-state.json");
   restorePairingState();
 
@@ -316,11 +431,62 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  logDragDebug("window.created", {
+    width: 420,
+    height: 420,
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
+  });
+
+  app.on("render-process-gone", (_event, webContents, details) => {
+    logDragDebug("render-process-gone", {
+      reason: details?.reason,
+      exitCode: details?.exitCode,
+      webContentsId: webContents?.id,
+    });
+    if (details?.reason === "crashed" || details?.reason === "oom") {
+      tryRelaunch("render-process-gone", {
+        reason: details?.reason,
+        exitCode: details?.exitCode,
+      });
+    }
+  });
+
+  app.on("child-process-gone", (_event, details) => {
+    logDragDebug("child-process-gone", {
+      type: details?.type,
+      reason: details?.reason,
+      exitCode: details?.exitCode,
+      serviceName: details?.serviceName,
+    });
+    if (details?.reason === "crashed" || details?.reason === "oom") {
+      tryRelaunch("child-process-gone", {
+        reason: details?.reason,
+        type: details?.type,
+        exitCode: details?.exitCode,
+      });
+    }
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  logDragDebug("process.uncaughtException", {
+    error: error?.message || String(error),
+    stack: error?.stack,
+  });
+  tryRelaunch("uncaughtException", {
+    error: error?.message || String(error),
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  logDragDebug("process.unhandledRejection", {
+    reason: reason?.message || String(reason),
+    stack: reason?.stack,
   });
 });
 
@@ -425,13 +591,22 @@ ipcMain.handle("items:saveFile", async (_event, itemId) => {
 
 ipcMain.on("items:startDrag", (event, itemId) => {
   try {
+    logDragDebug("drag.ipc.received", { itemId });
     const item = getReceivedItem(itemId);
     if (!item || item.type !== "file") {
+      logDragDebug("drag.item.invalid", { itemId, itemType: item?.type });
       return;
     }
+    logDragDebug("drag.item.loaded", {
+      itemId: item.id,
+      fileName: item.fileName,
+      mimeType: item.mimeType,
+      size: item.bytes?.length,
+    });
 
     if (!fsSync.existsSync(dragExportDir)) {
       fsSync.mkdirSync(dragExportDir, { recursive: true });
+      logDragDebug("drag.export-dir.created", { dragExportDir });
     }
 
     const safeName = sanitizeFileName(
@@ -440,16 +615,41 @@ ipcMain.on("items:startDrag", (event, itemId) => {
     );
     const targetPath = path.join(dragExportDir, `${item.id}-${safeName}`);
     fsSync.writeFileSync(targetPath, item.bytes);
+    logDragDebug("drag.temp-file.written", {
+      itemId: item.id,
+      targetPath,
+      writtenBytes: item.bytes.length,
+      exists: fsSync.existsSync(targetPath),
+    });
 
     const icon = buildDragIconFromItem(item);
+    logDragDebug("drag.startDrag.before", {
+      itemId: item.id,
+      targetPath,
+      iconEmpty: icon.isEmpty(),
+      iconSize: icon.getSize(),
+      platform: process.platform,
+    });
 
     event.sender.startDrag({
       file: targetPath,
       icon,
     });
+    logDragDebug("drag.startDrag.after", {
+      itemId: item.id,
+      targetPath,
+    });
   } catch (_error) {
-    // Ignore drag export failures silently to keep UI responsive.
+    logDragDebug("drag.error", {
+      itemId,
+      error: _error?.message || String(_error),
+      stack: _error?.stack,
+    });
   }
+});
+
+ipcMain.on("debug:log", (_event, payload) => {
+  logDragDebug("renderer", payload || {});
 });
 
 ipcMain.handle("clipboard:writeText", (_event, text) => {
