@@ -480,6 +480,22 @@ function createWindow() {
     },
   });
 
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    logWinDrop("webcontents.will-navigate", { url });
+    if (url && /^file:\/\//i.test(url)) {
+      event.preventDefault();
+      logWinDrop("webcontents.blocked-file-navigation", { url });
+    }
+  });
+
+  mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+    logWinDrop("webcontents.did-start-navigation", {
+      url,
+      isInPlace: Boolean(isInPlace),
+      isMainFrame: Boolean(isMainFrame),
+    });
+  });
+
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
