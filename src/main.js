@@ -4,7 +4,6 @@ const crypto = require("node:crypto");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const { execSync } = require("node:child_process");
-const { autoUpdater } = require("electron-updater");
 const {
   app,
   BrowserWindow,
@@ -44,6 +43,7 @@ const RECOVERY_WINDOW_MS = 5 * 60 * 1000;
 const MAX_RECOVERY_RESTARTS = 3;
 let recoveryStatePath = "";
 let updateReadyToInstall = false;
+let updaterInstance = null;
 
 function logDragDebug() {}
 
@@ -394,22 +394,40 @@ function notifyRenderer(channel, payload) {
   }
 }
 
+function getAutoUpdater() {
+  if (!updaterInstance) {
+    ({ autoUpdater: updaterInstance } = require("electron-updater"));
+  }
+  return updaterInstance;
+}
+
+function isNoUpdatesCondition(error) {
+  const message = String(error?.message || error || "");
+  return (
+    /404/i.test(message)
+    || /releases\.atom/i.test(message)
+    || /latest\.yml/i.test(message)
+    || /channel/i.test(message) && /not found/i.test(message)
+  );
+}
+
 function setupAutoUpdater() {
   if (!app.isPackaged) {
     return;
   }
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  const updater = getAutoUpdater();
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on("checking-for-update", () => {
+  updater.on("checking-for-update", () => {
     notifyRenderer("app:updateStatus", {
       stage: "checking",
       message: "Checking for updates...",
     });
   });
 
-  autoUpdater.on("update-available", (info) => {
+  updater.on("update-available", (info) => {
     notifyRenderer("app:updateStatus", {
       stage: "available",
       version: info?.version || "",
@@ -417,7 +435,7 @@ function setupAutoUpdater() {
     });
   });
 
-  autoUpdater.on("download-progress", (progress) => {
+  updater.on("download-progress", (progress) => {
     notifyRenderer("app:updateStatus", {
       stage: "downloading",
       percent: Number.isFinite(progress?.percent) ? Number(progress.percent.toFixed(1)) : 0,
@@ -425,7 +443,7 @@ function setupAutoUpdater() {
     });
   });
 
-  autoUpdater.on("update-downloaded", (info) => {
+  updater.on("update-downloaded", (info) => {
     updateReadyToInstall = true;
     notifyRenderer("app:updateStatus", {
       stage: "downloaded",
@@ -435,18 +453,26 @@ function setupAutoUpdater() {
     });
   });
 
-  autoUpdater.on("update-not-available", () => {
+  updater.on("update-not-available", () => {
     updateReadyToInstall = false;
     notifyRenderer("app:updateStatus", {
       stage: "not-available",
-      message: "You're on the latest version.",
+      message: "No updates available.",
     });
   });
 
-  autoUpdater.on("error", (error) => {
+  updater.on("error", (error) => {
+    if (isNoUpdatesCondition(error)) {
+      updateReadyToInstall = false;
+      notifyRenderer("app:updateStatus", {
+        stage: "not-available",
+        message: "No updates available.",
+      });
+      return;
+    }
     notifyRenderer("app:updateStatus", {
       stage: "error",
-      message: `Update error: ${error?.message || String(error)}`,
+      message: "Unable to check for updates right now.",
       isError: true,
     });
   });
@@ -656,10 +682,18 @@ app.whenReady().then(() => {
     if (!app.isPackaged) {
       return;
     }
-    autoUpdater.checkForUpdates().catch((error) => {
+    const updater = getAutoUpdater();
+    updater.checkForUpdates().catch((error) => {
+      if (isNoUpdatesCondition(error)) {
+        notifyRenderer("app:updateStatus", {
+          stage: "not-available",
+          message: "No updates available.",
+        });
+        return;
+      }
       notifyRenderer("app:updateStatus", {
         stage: "error",
-        message: `Update check failed: ${error?.message || String(error)}`,
+        message: "Unable to check for updates right now.",
         isError: true,
       });
     });
@@ -772,13 +806,21 @@ ipcMain.handle("app:checkForUpdates", async () => {
   }
 
   try {
-    const result = await autoUpdater.checkForUpdates();
+    const updater = getAutoUpdater();
+    const result = await updater.checkForUpdates();
     return {
       ok: true,
       updateInfo: result?.updateInfo || null,
     };
   } catch (error) {
-    throw new Error(error?.message || "Failed to check for updates.");
+    if (isNoUpdatesCondition(error)) {
+      return {
+        ok: true,
+        noUpdates: true,
+        message: "No updates available.",
+      };
+    }
+    throw new Error("Unable to check for updates right now.");
   }
 });
 
@@ -789,7 +831,8 @@ ipcMain.handle("app:installUpdate", () => {
   if (!updateReadyToInstall) {
     throw new Error("No downloaded update is ready to install.");
   }
-  autoUpdater.quitAndInstall();
+  const updater = getAutoUpdater();
+  updater.quitAndInstall();
   return { ok: true };
 });
 
