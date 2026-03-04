@@ -240,9 +240,14 @@ function renderOrbitArtifacts() {
           platform: isWindows ? "win" : "non-win",
           textLength: (item.text || item.textPreview || "").length,
         });
-        const payloadSet = attachDownloadData(event, item);
-        if (!payloadSet) {
-          debugLog("artifact.text.dragstart.download-payload-missing", { itemId: item.id });
+        if (isWindows) {
+          const payloadSet = attachDownloadData(event, item);
+          if (!payloadSet) {
+            debugLog("artifact.text.dragstart.download-payload-missing", { itemId: item.id });
+          }
+        } else {
+          event.preventDefault();
+          window.lanTunnel.startFileDrag(item.id);
         }
       });
       doc.addEventListener("dragend", (event) => {
@@ -293,6 +298,7 @@ function renderOrbitArtifacts() {
           attachDownloadData(event, item);
         } else {
           debugLog("artifact.image.dragstart.invoke-startFileDrag", { itemId: item.id });
+          event.preventDefault();
           window.lanTunnel.startFileDrag(item.id);
         }
       });
@@ -344,6 +350,7 @@ function renderOrbitArtifacts() {
           attachDownloadData(event, item);
         } else {
           debugLog("artifact.file.dragstart.invoke-startFileDrag", { itemId: item.id });
+          event.preventDefault();
           window.lanTunnel.startFileDrag(item.id);
         }
       });

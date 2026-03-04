@@ -1,4 +1,4 @@
-# LAN Paste Tunnel
+# Portal
 
 Minimal desktop app for secure text and file transfer between two machines on the same WiFi.
 

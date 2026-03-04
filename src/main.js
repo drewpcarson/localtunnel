@@ -643,7 +643,7 @@ function createWindow() {
     maxWidth: 420,
     maxHeight: 420,
     resizable: false,
-    title: "LAN Paste Tunnel",
+    title: "Portal",
     autoHideMenuBar: true,
     icon: path.join(__dirname, "assets", "icon.png"),
     webPreferences: {

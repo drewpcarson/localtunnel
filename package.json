@@ -1,6 +1,6 @@
 {
-  "name": "localtunnel",
-  "version": "1.0.4",
+  "name": "portal",
+  "version": "1.0.5",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -15,8 +15,8 @@
   "license": "ISC",
   "description": "LAN clipboard and file transfer desktop app",
   "build": {
-    "appId": "com.drewpcarson.localtunnel",
-    "productName": "LocalTunnel Portal",
+    "appId": "com.drewpcarson.portal",
+    "productName": "Portal",
     "files": [
       "src/**/*",
       "package.json"
