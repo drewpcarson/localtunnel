@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#03040c"/>
+      <stop offset="100%" stop-color="#0a0f25"/>
+    </linearGradient>
+    <radialGradient id="glowOuter" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5b00ff" stop-opacity="0.5"/>
+      <stop offset="60%" stop-color="#0093ff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#03040c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowInner" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#bff3ff" stop-opacity="0.8"/>
+      <stop offset="40%" stop-color="#4382ff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#03040c" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ringMain" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#bff3ff"/>
+      <stop offset="50%" stop-color="#4382ff"/>
+      <stop offset="100%" stop-color="#5b00ff"/>
+    </linearGradient>
+    <linearGradient id="ringDash" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#93e3ff"/>
+      <stop offset="100%" stop-color="#5b00ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background: macOS squircle shape approx (Windows will just show it as a rounded square, which looks great too) -->
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  
+  <!-- Outer Glow -->
+  <circle cx="512" cy="512" r="450" fill="url(#glowOuter)"/>
+
+  <!-- Outer Dashed Ring -->
+  <circle cx="512" cy="512" r="340" stroke="url(#ringDash)" stroke-width="12" fill="none" stroke-dasharray="24 32" opacity="0.8"/>
+  
+  <!-- Main Portal Ring -->
+  <circle cx="512" cy="512" r="280" stroke="url(#ringMain)" stroke-width="32" fill="none"/>
+  
+  <!-- Inner Glow -->
+  <circle cx="512" cy="512" r="264" fill="url(#glowInner)"/>
+
+  <!-- Inner Ring -->
+  <circle cx="512" cy="512" r="230" stroke="#bff3ff" stroke-width="8" fill="none" opacity="0.6"/>
+  
+  <!-- Core -->
+  <circle cx="512" cy="512" r="200" fill="#010206"/>
+  <circle cx="512" cy="512" r="200" fill="url(#glowOuter)" opacity="0.4"/>
+</svg>

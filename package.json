@@ -22,6 +22,7 @@
       "package.json"
     ],
     "win": {
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "nsis",
@@ -31,6 +32,9 @@
         }
       ],
       "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
