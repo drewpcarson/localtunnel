@@ -43,25 +43,15 @@ async function dismissItemFromUi(itemId) {
   receivedItems = receivedItems.filter((item) => item.id !== itemId);
   dragPathCache.delete(itemId);
   renderOrbitArtifacts();
+  debugLog("artifact.dismiss.ui", { itemId });
   try {
     await window.lanTunnel.dismissItem(itemId);
+    debugLog("artifact.dismiss.sync.success", { itemId });
   } catch (_error) {
-    // Keep UI responsive even if background dismissal fails.
-  }
-}
-
-function isItemAlive(item) {
-  return Date.now() - item.createdAt < ARTIFACT_LIFETIME_MS;
-}
-
-async function dismissItemFromUi(itemId) {
-  receivedItems = receivedItems.filter((item) => item.id !== itemId);
-  dragPathCache.delete(itemId);
-  renderOrbitArtifacts();
-  try {
-    await window.lanTunnel.dismissItem(itemId);
-  } catch (_error) {
-    // Keep UI responsive even if dismissal sync fails.
+    debugLog("artifact.dismiss.sync.error", {
+      itemId,
+      error: _error?.message || String(_error),
+    });
   }
 }
 
@@ -84,7 +74,9 @@ function artifactVarsFor(item, index) {
 }
 
 async function refreshReceivedArtifacts() {
+  debugLog("artifacts.refresh.start");
   receivedItems = (await window.lanTunnel.listItems()).filter(isItemAlive);
+  debugLog("artifacts.refresh.loaded", { count: receivedItems.length });
   for (const item of receivedItems) {
     if (item.type === "file" || item.type === "text") {
       void ensureDragPath(item.id);
@@ -95,18 +87,21 @@ async function refreshReceivedArtifacts() {
 
 async function ensureDragPath(itemId) {
   if (dragPathCache.has(itemId)) {
+    debugLog("drag.path.cache.hit", { itemId }, 400);
     return dragPathCache.get(itemId);
   }
   try {
+    debugLog("drag.path.fetch.start", { itemId });
     const result = await window.lanTunnel.getDragFilePath(itemId);
     dragPathCache.set(itemId, result);
-    debugLog("drag.path.cached", {
+    debugLog("drag.path.fetch.success", {
       itemId,
       path: result?.path,
+      mimeType: result?.mimeType,
     });
     return result;
   } catch (error) {
-    debugLog("drag.path.cache-error", {
+    debugLog("drag.path.fetch.error", {
       itemId,
       error: error?.message || String(error),
     });
@@ -119,10 +114,10 @@ function filePathToFileUrl(filePath) {
   return encodeURI(`file:///${normalized.replace(/^\/+/, "")}`);
 }
 
-function attachWindowsDownloadData(event, item) {
+function attachDownloadData(event, item) {
   const cached = dragPathCache.get(item.id);
   if (!cached?.path) {
-    debugLog("artifact.drag.windows.no-cached-path", {
+    debugLog("artifact.drag.download.no-cached-path", {
       itemId: item.id,
       fileName: item.fileName,
     });
@@ -138,7 +133,7 @@ function attachWindowsDownloadData(event, item) {
   event.dataTransfer.setData("DownloadURL", `${mimeType}:${fileName}:${fileUrl}`);
   event.dataTransfer.setData("text/uri-list", fileUrl);
   event.dataTransfer.setData("text/plain", cached.path);
-  debugLog("artifact.drag.windows.downloadurl-set", {
+  debugLog("artifact.drag.download.payload-set", {
     itemId: item.id,
     fileUrl,
     fileName,
@@ -151,6 +146,10 @@ function renderOrbitArtifacts() {
   orbitLayer.innerHTML = "";
   receivedItems = receivedItems.filter(isItemAlive);
   const visible = receivedItems.slice(0, 14);
+  debugLog("artifacts.render", {
+    total: receivedItems.length,
+    visible: visible.length,
+  }, 3000);
 
   for (const [index, item] of visible.entries()) {
     const orbitItem = document.createElement("div");
@@ -183,13 +182,21 @@ function renderOrbitArtifacts() {
       doc.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
         lastTextDragAt = Date.now();
-        if (isWindows) {
-          attachWindowsDownloadData(event, item);
-        } else {
-          window.lanTunnel.startFileDrag(item.id);
+        debugLog("artifact.text.dragstart", {
+          itemId: item.id,
+          platform: isWindows ? "win" : "non-win",
+          textLength: (item.text || item.textPreview || "").length,
+        });
+        const payloadSet = attachDownloadData(event, item);
+        if (!payloadSet) {
+          debugLog("artifact.text.dragstart.download-payload-missing", { itemId: item.id });
         }
       });
       doc.addEventListener("dragend", (event) => {
+        debugLog("artifact.text.dragend", {
+          itemId: item.id,
+          dropEffect: event.dataTransfer?.dropEffect || "unknown",
+        });
         if (event.dataTransfer?.dropEffect && event.dataTransfer.dropEffect !== "none") {
           void dismissItemFromUi(item.id);
         }
@@ -213,13 +220,23 @@ function renderOrbitArtifacts() {
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
+        debugLog("artifact.image.dragstart", {
+          itemId: item.id,
+          platform: isWindows ? "win" : "non-win",
+          fileName: item.fileName,
+        });
         if (isWindows) {
-          attachWindowsDownloadData(event, item);
+          attachDownloadData(event, item);
         } else {
+          debugLog("artifact.image.dragstart.invoke-startFileDrag", { itemId: item.id });
           window.lanTunnel.startFileDrag(item.id);
         }
       });
       wrap.addEventListener("dragend", (event) => {
+        debugLog("artifact.image.dragend", {
+          itemId: item.id,
+          dropEffect: event.dataTransfer?.dropEffect || "unknown",
+        });
         if (event.dataTransfer?.dropEffect && event.dataTransfer.dropEffect !== "none") {
           void dismissItemFromUi(item.id);
         }
@@ -235,13 +252,23 @@ function renderOrbitArtifacts() {
       generic.title = `${name} - drag out to desktop`;
       generic.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
+        debugLog("artifact.file.dragstart", {
+          itemId: item.id,
+          platform: isWindows ? "win" : "non-win",
+          fileName: item.fileName,
+        });
         if (isWindows) {
-          attachWindowsDownloadData(event, item);
+          attachDownloadData(event, item);
         } else {
+          debugLog("artifact.file.dragstart.invoke-startFileDrag", { itemId: item.id });
           window.lanTunnel.startFileDrag(item.id);
         }
       });
       generic.addEventListener("dragend", (event) => {
+        debugLog("artifact.file.dragend", {
+          itemId: item.id,
+          dropEffect: event.dataTransfer?.dropEffect || "unknown",
+        });
         if (event.dataTransfer?.dropEffect && event.dataTransfer.dropEffect !== "none") {
           void dismissItemFromUi(item.id);
         }
@@ -405,6 +432,7 @@ window.addEventListener("paste", async (event) => {
 
 dropZone.addEventListener("dragover", (event) => {
   event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
   dropZone.classList.add("drag-over");
   debugLog("dropzone.dragover", { key: "dropzone" }, 400);
 });
@@ -416,26 +444,47 @@ window.addEventListener("dragleave", (event) => {
   }
 });
 
+async function handleInboundDrop(dataTransfer) {
+  if (!dataTransfer) {
+    return;
+  }
+  const file = dataTransfer.files?.[0];
+  if (file) {
+    await sendFile(file);
+    return;
+  }
+
+  const text = dataTransfer.getData("text/plain") || "";
+  if (text) {
+    await sendText(text);
+  }
+}
+
 dropZone.addEventListener("drop", async (event) => {
   event.preventDefault();
   dropZone.classList.remove("drag-over");
   debugLog("dropzone.drop", {
     fileCount: event.dataTransfer?.files?.length || 0,
   });
+  await handleInboundDrop(event.dataTransfer);
+});
 
-  const file = event.dataTransfer?.files?.[0];
-  if (file) {
-    await sendFile(file);
-    return;
+window.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
   }
+  dropZone.classList.add("drag-over");
+});
 
-  const text = event.dataTransfer?.getData("text/plain") || "";
-  if (text) {
-    await sendText(text);
-  }
+window.addEventListener("drop", async (event) => {
+  event.preventDefault();
+  dropZone.classList.remove("drag-over");
+  await handleInboundDrop(event.dataTransfer);
 });
 
 window.lanTunnel.onIncomingItem(async () => {
+  debugLog("incoming.item.event");
   await refreshReceivedArtifacts();
   setStatus("Artifact arrived.");
 });
@@ -463,12 +512,14 @@ window.lanTunnel.onPaired(({ peerUrl, peerName }) => {
     activePeerUrl = peerUrl;
   }
   renderPeers();
+  debugLog("pairing.paired", { peerName, peerUrl });
   setStatus(`Paired with ${peerName || "peer"}`);
 });
 
 window.lanTunnel.onPairingCleared(({ reason }) => {
   activePeerUrl = "";
   renderPeers();
+  debugLog("pairing.cleared", { reason });
   setStatus(reason || "Pairing cleared.", true);
 });
 
@@ -516,6 +567,7 @@ pairDeclineBtn.addEventListener("click", async () => {
 });
 
 async function init() {
+  debugLog("init.start", { platform: navigator.platform });
   const appInfo = await window.lanTunnel.appInfo();
   peers = appInfo.peers || [];
   activePeerUrl = appInfo.activePeerUrl || "";
@@ -534,6 +586,10 @@ async function init() {
   peers = await window.lanTunnel.listPeers();
   renderPeers();
   setStatus("Ready for paste, drop, and drift.");
+  debugLog("init.ready", {
+    peerCount: peers.length,
+    activePeerUrl: activePeerUrl || "",
+  });
 }
 
 init();

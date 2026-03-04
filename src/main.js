@@ -146,8 +146,35 @@ function ensureBackupsDir() {
   }
 }
 
+function getBackupArtifactDescriptor(item) {
+  if (!item) {
+    throw new Error("Missing incoming item.");
+  }
+
+  if (item.type === "file" && item.bytes) {
+    const safeName = sanitizeFileName(
+      path.basename(item.fileName || ""),
+      `received-${item.id}`
+    );
+    return {
+      fileName: safeName,
+      bytes: Buffer.from(item.bytes),
+    };
+  }
+
+  if (item.type === "text") {
+    const safeName = `received-note-${String(item.id || "item").slice(0, 8)}.txt`;
+    return {
+      fileName: safeName,
+      bytes: Buffer.from(String(item.text || ""), "utf8"),
+    };
+  }
+
+  throw new Error(`Unsupported backup item type: ${item.type}`);
+}
+
 async function backupReceivedFile(item) {
-  if (!item || item.type !== "file" || !item.bytes) {
+  if (!item || (item.type !== "file" && item.type !== "text")) {
     return;
   }
 
@@ -155,18 +182,17 @@ async function backupReceivedFile(item) {
     ensureBackupsDir();
     const now = new Date();
     const stamp = now.toISOString().replace(/[:.]/g, "-");
-    const safeName = sanitizeFileName(
-      path.basename(item.fileName || ""),
-      `received-${item.id}`
-    );
+    const descriptor = getBackupArtifactDescriptor(item);
+    const safeName = sanitizeFileName(descriptor.fileName, `received-${item.id}`);
     const fileName = `${stamp}-${safeName}`;
     const targetPath = path.join(backupsDirPath, fileName);
-    await fs.writeFile(targetPath, item.bytes);
+    await fs.writeFile(targetPath, descriptor.bytes);
     logDragDebug("backup.file.saved", {
       itemId: item.id,
       fileName,
       targetPath,
-      bytes: item.bytes.length,
+      bytes: descriptor.bytes.length,
+      type: item.type,
     });
   } catch (error) {
     logDragDebug("backup.file.error", {
@@ -478,7 +504,7 @@ app.whenReady().then(() => {
           textPreview: item.type === "text" ? item.text : "",
         });
       }
-      if (item.type === "file") {
+      if (item.type === "file" || item.type === "text") {
         void backupReceivedFile(item);
       }
     },
