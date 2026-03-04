@@ -1,21 +1,30 @@
-const sharedKeyInput = document.getElementById("sharedKey");
 const peerUrlInput = document.getElementById("peerUrl");
 const toggleSetupBtn = document.getElementById("toggleSetupBtn");
 const toggleReceivedBtn = document.getElementById("toggleReceivedBtn");
 const copyEndpointBtn = document.getElementById("copyEndpointBtn");
 const setupPanel = document.getElementById("setupContent");
 const receivedPanel = document.getElementById("receivedPanel");
+const pairStatusEl = document.getElementById("pairStatus");
 const localUrlList = document.getElementById("localUrlList");
 const peerList = document.getElementById("peerList");
 const dropZone = document.getElementById("dropZone");
 const statusEl = document.getElementById("status");
 const receivedList = document.getElementById("receivedList");
+const pairRequestModal = document.getElementById("pairRequestModal");
+const pairRequestText = document.getElementById("pairRequestText");
+const pairAcceptBtn = document.getElementById("pairAcceptBtn");
+const pairDeclineBtn = document.getElementById("pairDeclineBtn");
 let endpoints = [];
 let peers = [];
+let currentPairRequest = null;
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
   statusEl.style.color = isError ? "#ff9fba" : "#9cbad6";
+}
+
+function setPairStatus(message) {
+  pairStatusEl.textContent = message;
 }
 
 function formatBytes(size) {
@@ -57,9 +66,17 @@ function renderPeers() {
     const pairBtn = document.createElement("button");
     pairBtn.className = "mini-btn";
     pairBtn.textContent = "Pair";
-    pairBtn.addEventListener("click", () => {
-      peerUrlInput.value = peer.endpoint;
-      setStatus(`Paired to ${peer.name}`);
+    pairBtn.addEventListener("click", async () => {
+      try {
+        await window.lanTunnel.requestPairing({
+          peerEndpoint: peer.endpoint,
+          peerName: peer.name,
+        });
+        peerUrlInput.value = peer.endpoint;
+        setStatus(`Request sent to ${peer.name}...`);
+      } catch (error) {
+        setStatus(error.message || "Unable to send pairing request.", true);
+      }
     });
     li.appendChild(pairBtn);
 
@@ -131,10 +148,7 @@ async function sendText(text) {
       return;
     }
 
-    await window.lanTunnel.sendText({
-      peerUrl: peerUrlInput.value,
-      text,
-    });
+    await window.lanTunnel.sendText({ peerUrl: peerUrlInput.value, text });
 
     setStatus("Text sent.");
   } catch (error) {
@@ -158,10 +172,6 @@ async function sendFile(selected) {
     setStatus(error.message || "Failed to send file.", true);
   }
 }
-
-sharedKeyInput.addEventListener("input", async () => {
-  await window.lanTunnel.updateSharedKey(sharedKeyInput.value);
-});
 
 toggleSetupBtn.addEventListener("click", () => {
   setupPanel.classList.toggle("hidden");
@@ -237,12 +247,75 @@ window.lanTunnel.onPeersUpdated((nextPeers) => {
   renderPeers();
 });
 
+window.lanTunnel.onPairingIncomingRequest((request) => {
+  currentPairRequest = request;
+  pairRequestText.textContent = `${request.fromName} wants to pair with this portal.`;
+  pairRequestModal.classList.remove("hidden");
+  setStatus("Incoming pairing request.");
+});
+
+window.lanTunnel.onPairingStatus((status) => {
+  if (status?.message) {
+    setStatus(status.message, status.type === "rejected" || status.type === "timeout");
+  }
+});
+
+window.lanTunnel.onPaired(({ peerUrl, peerName }) => {
+  if (peerUrl) {
+    peerUrlInput.value = peerUrl;
+  }
+  setPairStatus(`Paired with ${peerName || "peer"}`);
+});
+
+pairAcceptBtn.addEventListener("click", async () => {
+  if (!currentPairRequest) {
+    return;
+  }
+  try {
+    await window.lanTunnel.respondPairing({
+      requestId: currentPairRequest.requestId,
+      accept: true,
+    });
+    peerUrlInput.value = currentPairRequest.fromEndpoint;
+    setPairStatus(`Paired with ${currentPairRequest.fromName}`);
+  } catch (error) {
+    setStatus(error.message || "Unable to accept pairing.", true);
+  } finally {
+    currentPairRequest = null;
+    pairRequestModal.classList.add("hidden");
+  }
+});
+
+pairDeclineBtn.addEventListener("click", async () => {
+  if (!currentPairRequest) {
+    return;
+  }
+  try {
+    await window.lanTunnel.respondPairing({
+      requestId: currentPairRequest.requestId,
+      accept: false,
+    });
+  } catch (error) {
+    setStatus(error.message || "Unable to decline pairing.", true);
+  } finally {
+    currentPairRequest = null;
+    pairRequestModal.classList.add("hidden");
+  }
+});
+
 async function init() {
   const appInfo = await window.lanTunnel.appInfo();
   endpoints = appInfo.localUrls;
   peers = appInfo.peers || [];
+  if (appInfo.activePeerUrl) {
+    peerUrlInput.value = appInfo.activePeerUrl;
+    setPairStatus(`Paired with ${appInfo.activePeerName || "peer"}`);
+  } else {
+    setPairStatus("Not paired");
+  }
   setupPanel.classList.add("hidden");
   receivedPanel.classList.add("hidden");
+  pairRequestModal.classList.add("hidden");
   renderPeers();
   localUrlList.innerHTML = "";
   for (const url of endpoints) {

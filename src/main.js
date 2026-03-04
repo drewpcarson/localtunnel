@@ -1,4 +1,6 @@
 const path = require("node:path");
+const os = require("node:os");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const { app, BrowserWindow, ipcMain, dialog, clipboard } = require("electron");
 const { encryptBuffer, keyFingerprint } = require("./crypto");
@@ -7,14 +9,20 @@ const { startDiscovery } = require("./discovery");
 const { getReceivedItem, listReceivedItems } = require("./store");
 
 const PORT = 43827;
+const PAIR_TIMEOUT_MS = 30000;
 const state = {
   sharedKey: "",
+  activePeerUrl: "",
+  activePeerName: "",
+  deviceName: os.hostname(),
 };
 
 let mainWindow;
 let localUrls = [];
 let discoveryHandle;
 let discoveredPeers = [];
+const outgoingPairRequests = new Map();
+const incomingPairRequests = new Map();
 
 function normalizePeerUrl(input) {
   if (!input || typeof input !== "string") {
@@ -48,6 +56,43 @@ async function sendEncryptedJson(url, endpoint, body, sharedKey) {
     }
     throw new Error(message);
   }
+}
+
+async function sendJson(url, endpoint, body) {
+  const response = await fetch(`${url}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const data = await response.json();
+      message = data.error || message;
+    } catch (_error) {
+      // No-op: fallback to status code text.
+    }
+    throw new Error(message);
+  }
+}
+
+function notifyRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
+
+function setActivePairingSession({ peerUrl, peerName, sharedKey }) {
+  state.activePeerUrl = normalizePeerUrl(peerUrl);
+  state.activePeerName = String(peerName || "Peer");
+  state.sharedKey = String(sharedKey || "");
+  notifyRenderer("pairing:paired", {
+    peerUrl: state.activePeerUrl,
+    peerName: state.activePeerName,
+  });
 }
 
 function createWindow() {
@@ -86,6 +131,43 @@ app.whenReady().then(() => {
           textPreview: item.type === "text" ? item.text : "",
         });
       }
+    },
+    onPairRequest: ({ requestId, fromName, fromEndpoint, proposedKey }) => {
+      incomingPairRequests.set(requestId, {
+        requestId,
+        fromName,
+        fromEndpoint,
+        proposedKey,
+        createdAt: Date.now(),
+      });
+      notifyRenderer("pairing:incomingRequest", {
+        requestId,
+        fromName,
+        fromEndpoint,
+      });
+    },
+    onPairConfirm: ({ requestId, accepted }) => {
+      const pending = outgoingPairRequests.get(requestId);
+      if (!pending) {
+        return;
+      }
+      outgoingPairRequests.delete(requestId);
+      if (!accepted) {
+        notifyRenderer("pairing:status", {
+          type: "rejected",
+          message: `${pending.peerName} declined pairing.`,
+        });
+        return;
+      }
+      setActivePairingSession({
+        peerUrl: pending.peerEndpoint,
+        peerName: pending.peerName,
+        sharedKey: pending.sharedKey,
+      });
+      notifyRenderer("pairing:status", {
+        type: "paired",
+        message: `Paired with ${pending.peerName}.`,
+      });
     },
   });
 
@@ -132,16 +214,18 @@ ipcMain.handle("app:info", () => {
     port: PORT,
     localUrls,
     peers: discoveredPeers,
+    activePeerUrl: state.activePeerUrl,
+    activePeerName: state.activePeerName,
   };
 });
 
 ipcMain.handle("transfer:sendText", async (_event, { peerUrl, text }) => {
   const sharedKey = state.sharedKey;
   if (!sharedKey || sharedKey.length < 8) {
-    throw new Error("Set a shared key with at least 8 characters.");
+    throw new Error("Pair with a nearby device first.");
   }
 
-  const url = normalizePeerUrl(peerUrl);
+  const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
   const payload = encryptBuffer(Buffer.from(text, "utf8"), sharedKey);
   await sendEncryptedJson(url, "/api/receive-text", { payload }, sharedKey);
   return { ok: true };
@@ -150,14 +234,14 @@ ipcMain.handle("transfer:sendText", async (_event, { peerUrl, text }) => {
 ipcMain.handle("transfer:sendFile", async (_event, { peerUrl, file }) => {
   const sharedKey = state.sharedKey;
   if (!sharedKey || sharedKey.length < 8) {
-    throw new Error("Set a shared key with at least 8 characters.");
+    throw new Error("Pair with a nearby device first.");
   }
 
   if (!file?.name || !file?.bytes) {
     throw new Error("Invalid file.");
   }
 
-  const url = normalizePeerUrl(peerUrl);
+  const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
   const bytes = Buffer.from(file.bytes);
   const payload = encryptBuffer(bytes, sharedKey);
   await sendEncryptedJson(
@@ -204,4 +288,75 @@ ipcMain.handle("peers:list", () => {
     discoveredPeers = discoveryHandle.getPeers();
   }
   return discoveredPeers;
+});
+
+ipcMain.handle("pairing:request", async (_event, { peerEndpoint, peerName }) => {
+  const normalizedPeerEndpoint = normalizePeerUrl(peerEndpoint);
+  const localEndpoint =
+    localUrls.find((url) => !url.includes("localhost")) || localUrls[0];
+  if (!localEndpoint) {
+    throw new Error("Local endpoint unavailable.");
+  }
+
+  const requestId = crypto.randomUUID();
+  const sharedKey = crypto.randomBytes(32).toString("base64url");
+  outgoingPairRequests.set(requestId, {
+    requestId,
+    peerEndpoint: normalizedPeerEndpoint,
+    peerName: String(peerName || "Peer"),
+    sharedKey,
+    createdAt: Date.now(),
+  });
+
+  setTimeout(() => {
+    if (outgoingPairRequests.has(requestId)) {
+      outgoingPairRequests.delete(requestId);
+      notifyRenderer("pairing:status", {
+        type: "timeout",
+        message: "Pairing request timed out.",
+      });
+    }
+  }, PAIR_TIMEOUT_MS);
+
+  await sendJson(normalizedPeerEndpoint, "/api/pair-request", {
+    requestId,
+    fromName: state.deviceName,
+    fromEndpoint: localEndpoint,
+    proposedKey: sharedKey,
+  });
+  notifyRenderer("pairing:status", {
+    type: "pending",
+    message: `Pairing request sent to ${peerName || "peer"}...`,
+  });
+  return { ok: true };
+});
+
+ipcMain.handle("pairing:respond", async (_event, { requestId, accept }) => {
+  const pending = incomingPairRequests.get(requestId);
+  if (!pending) {
+    throw new Error("Pairing request no longer available.");
+  }
+  incomingPairRequests.delete(requestId);
+
+  if (accept) {
+    setActivePairingSession({
+      peerUrl: pending.fromEndpoint,
+      peerName: pending.fromName,
+      sharedKey: pending.proposedKey,
+    });
+  }
+
+  await sendJson(normalizePeerUrl(pending.fromEndpoint), "/api/pair-confirm", {
+    requestId,
+    accepted: Boolean(accept),
+  });
+
+  notifyRenderer("pairing:status", {
+    type: accept ? "paired" : "rejected",
+    message: accept
+      ? `Paired with ${pending.fromName}.`
+      : `Declined pairing from ${pending.fromName}.`,
+  });
+
+  return { ok: true };
 });

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("lanTunnel", {
   saveFile: (itemId) => ipcRenderer.invoke("items:saveFile", itemId),
   writeClipboard: (text) => ipcRenderer.invoke("clipboard:writeText", text),
   listPeers: () => ipcRenderer.invoke("peers:list"),
+  requestPairing: (payload) => ipcRenderer.invoke("pairing:request", payload),
+  respondPairing: (payload) => ipcRenderer.invoke("pairing:respond", payload),
   onIncomingItem: (handler) => {
     const listener = (_event, item) => handler(item);
     ipcRenderer.on("incoming:item", listener);
@@ -19,5 +21,20 @@ contextBridge.exposeInMainWorld("lanTunnel", {
     const listener = (_event, peers) => handler(peers);
     ipcRenderer.on("peers:updated", listener);
     return () => ipcRenderer.removeListener("peers:updated", listener);
+  },
+  onPairingIncomingRequest: (handler) => {
+    const listener = (_event, request) => handler(request);
+    ipcRenderer.on("pairing:incomingRequest", listener);
+    return () => ipcRenderer.removeListener("pairing:incomingRequest", listener);
+  },
+  onPairingStatus: (handler) => {
+    const listener = (_event, status) => handler(status);
+    ipcRenderer.on("pairing:status", listener);
+    return () => ipcRenderer.removeListener("pairing:status", listener);
+  },
+  onPaired: (handler) => {
+    const listener = (_event, pairing) => handler(pairing);
+    ipcRenderer.on("pairing:paired", listener);
+    return () => ipcRenderer.removeListener("pairing:paired", listener);
   },
 });

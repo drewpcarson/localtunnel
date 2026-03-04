@@ -26,7 +26,13 @@ function getLanAddresses(port) {
   return urls;
 }
 
-function startServer({ port, getSharedKey, onIncomingItem }) {
+function startServer({
+  port,
+  getSharedKey,
+  onIncomingItem,
+  onPairRequest,
+  onPairConfirm,
+}) {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: "200mb" }));
@@ -37,6 +43,9 @@ function startServer({ port, getSharedKey, onIncomingItem }) {
 
   app.use((req, res, next) => {
     if (req.method === "GET") {
+      return next();
+    }
+    if (req.path === "/api/pair-request" || req.path === "/api/pair-confirm") {
       return next();
     }
 
@@ -107,6 +116,40 @@ function startServer({ port, getSharedKey, onIncomingItem }) {
 
   app.get("/api/items", (_req, res) => {
     res.json({ items: listReceivedItems() });
+  });
+
+  app.post("/api/pair-request", (req, res) => {
+    const requestId = String(req.body?.requestId || "");
+    const fromName = String(req.body?.fromName || "Unknown device");
+    const fromEndpoint = String(req.body?.fromEndpoint || "");
+    const proposedKey = String(req.body?.proposedKey || "");
+    if (!requestId || !fromEndpoint || proposedKey.length < 16) {
+      return res.status(400).json({ error: "Invalid pairing request." });
+    }
+    if (onPairRequest) {
+      onPairRequest({
+        requestId,
+        fromName,
+        fromEndpoint,
+        proposedKey,
+      });
+    }
+    return res.json({ ok: true });
+  });
+
+  app.post("/api/pair-confirm", (req, res) => {
+    const requestId = String(req.body?.requestId || "");
+    const accepted = Boolean(req.body?.accepted);
+    if (!requestId) {
+      return res.status(400).json({ error: "Invalid pairing confirmation." });
+    }
+    if (onPairConfirm) {
+      onPairConfirm({
+        requestId,
+        accepted,
+      });
+    }
+    return res.json({ ok: true });
   });
 
   app.get("/api/download/:id", (req, res) => {

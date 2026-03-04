@@ -22,10 +22,7 @@
 
       <section id="setupContent" class="overlay-panel hidden">
         <h2>Setup</h2>
-        <label>
-          Shared key
-          <input id="sharedKey" type="password" placeholder="Minimum 8 chars" />
-        </label>
+        <div id="pairStatus" class="pair-status">Not paired</div>
         <label>
           Peer address
           <input id="peerUrl" type="text" placeholder="192.168.1.23:43827" />
@@ -44,6 +41,15 @@
         <h1>PORTAL</h1>
         <p>Paste or drop to tunnel</p>
       </div>
+
+      <section id="pairRequestModal" class="pair-modal hidden">
+        <h2>Pair request</h2>
+        <p id="pairRequestText"></p>
+        <div class="pair-actions">
+          <button id="pairAcceptBtn" class="mini-btn">Accept</button>
+          <button id="pairDeclineBtn" class="mini-btn">Decline</button>
+        </div>
+      </section>
 
       <p id="status" class="status"></p>
     </main>
