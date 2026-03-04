@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LAN Paste Tunnel</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="dropZone" class="app portal">
+      <div class="portal-glow"></div>
+      <div class="portal-ring"></div>
+
+      <div class="menu-overlay left">
+        <button id="toggleSetupBtn" class="icon-btn" title="Setup">⚙</button>
+        <button id="toggleReceivedBtn" class="icon-btn" title="Received">☰</button>
+      </div>
+
+      <div class="menu-overlay right">
+        <button id="copyEndpointBtn" class="icon-btn" title="Copy endpoint">⎘</button>
+      </div>
+
+      <section id="setupContent" class="overlay-panel hidden">
+        <h2>Setup</h2>
+        <label>
+          Shared key
+          <input id="sharedKey" type="password" placeholder="Minimum 8 chars" />
+        </label>
+        <label>
+          Peer address
+          <input id="peerUrl" type="text" placeholder="192.168.1.23:43827" />
+        </label>
+        <ul id="localUrlList" class="local-url-list"></ul>
+      </section>
+
+      <section id="receivedPanel" class="overlay-panel hidden">
+        <h2>Received</h2>
+        <ul id="receivedList" class="received-list"></ul>
+      </section>
+
+      <div class="portal-content">
+        <h1>PORTAL</h1>
+        <p>Paste or drop to tunnel</p>
+      </div>
+
+      <p id="status" class="status"></p>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

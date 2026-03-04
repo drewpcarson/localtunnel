@@ -1,0 +1,303 @@
+:root {
+  color-scheme: dark;
+  --bg: #03040c;
+  --text: #ebf7ff;
+  --muted: #9cbad6;
+  --line: rgba(145, 197, 255, 0.25);
+  --line-bright: rgba(147, 227, 255, 0.75);
+  --panel: rgba(7, 11, 30, 0.78);
+  --panel-border: rgba(140, 180, 255, 0.34);
+  --ok: #bff3ff;
+  --bad: #ff9fba;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 80% 15%, rgba(91, 0, 255, 0.24), transparent 42%),
+    radial-gradient(circle at 20% 75%, rgba(0, 147, 255, 0.2), transparent 48%),
+    #050711;
+}
+
+.portal {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 1px solid #1d2942;
+  isolation: isolate;
+}
+
+.portal-glow {
+  position: absolute;
+  inset: -8%;
+  background:
+    radial-gradient(circle, rgba(88, 134, 255, 0.24) 0%, rgba(72, 34, 180, 0.18) 26%, transparent 66%);
+  filter: blur(10px);
+  animation: drift 7.5s ease-in-out infinite alternate;
+}
+
+.portal-ring {
+  position: absolute;
+  width: 240px;
+  height: 240px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  box-shadow:
+    0 0 26px rgba(41, 143, 255, 0.25),
+    inset 0 0 30px rgba(67, 130, 255, 0.2);
+  animation: pulse 3.2s ease-in-out infinite;
+}
+
+.portal-ring::before,
+.portal-ring::after {
+  content: "";
+  position: absolute;
+  inset: 16px;
+  border-radius: 999px;
+  border: 1px dashed rgba(147, 227, 255, 0.34);
+  animation: spin 9s linear infinite;
+}
+
+.portal-ring::after {
+  inset: -20px;
+  border-style: solid;
+  border-color: rgba(106, 170, 255, 0.2);
+  animation-direction: reverse;
+  animation-duration: 14s;
+}
+
+.portal-content {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.portal-content h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: 0.36em;
+  color: var(--ok);
+  text-shadow: 0 0 16px rgba(102, 226, 255, 0.5);
+}
+
+.portal-content p {
+  margin: 10px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.menu-overlay {
+  position: absolute;
+  top: 8px;
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+}
+
+.menu-overlay.left {
+  left: 8px;
+}
+
+.menu-overlay.right {
+  right: 8px;
+}
+
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  border-color: var(--line-bright);
+  box-shadow: 0 0 10px rgba(140, 200, 255, 0.35);
+}
+
+.overlay-panel {
+  position: absolute;
+  top: 40px;
+  left: 8px;
+  right: 8px;
+  max-height: 162px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--panel) 90%, #000 10%);
+  backdrop-filter: blur(8px);
+  z-index: 5;
+}
+
+.overlay-panel h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.hidden {
+  display: none;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+input,
+button {
+  font: inherit;
+}
+
+input {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  background: rgba(8, 13, 31, 0.82);
+  color: var(--text);
+  padding: 6px 7px;
+}
+
+.local-url-list,
+.received-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.url-item,
+.received-item {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(8, 14, 34, 0.78);
+  padding: 6px;
+}
+
+.url-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.url-item code {
+  flex: 1;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-btn {
+  border: 1px solid var(--panel-border);
+  background: rgba(14, 25, 52, 0.78);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 10px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  border-color: var(--line-bright);
+}
+
+.received-item p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+.status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  z-index: 6;
+  pointer-events: none;
+  text-shadow: 0 0 10px rgba(67, 188, 255, 0.35);
+}
+
+.portal.drag-over .portal-ring {
+  border-color: var(--line-bright);
+  box-shadow:
+    0 0 36px rgba(67, 188, 255, 0.45),
+    inset 0 0 40px rgba(97, 139, 255, 0.3);
+}
+
+.portal.drag-over .portal-content h1 {
+  color: #d8ffff;
+}
+
+@keyframes drift {
+  0% {
+    transform: translate(-4px, 0) scale(1);
+  }
+  100% {
+    transform: translate(4px, -6px) scale(1.04);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.04);
+    opacity: 1;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

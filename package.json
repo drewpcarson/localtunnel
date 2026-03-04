@@ -1,0 +1,19 @@
+{
+  "name": "localtunnel",
+  "version": "1.0.0",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "echo \"No tests yet\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "LAN clipboard and file transfer desktop app",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "electron": "^40.7.0",
+    "express": "^5.2.1",
+    "ws": "^8.19.0"
+  }
+}
