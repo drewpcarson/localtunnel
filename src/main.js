@@ -178,30 +178,60 @@ function buildDragIconFromItem(item) {
   return fallback;
 }
 
-function exportDragFile(item) {
-  if (!item || item.type !== "file") {
-    throw new Error("Invalid file drag item.");
+function getDragArtifactDescriptor(item) {
+  if (!item) {
+    throw new Error("Missing drag item.");
   }
+
+  if (item.type === "file") {
+    const baseName = sanitizeFileName(
+      path.basename(item.fileName || ""),
+      `file-${item.id}`
+    );
+    return {
+      fileName: baseName,
+      mimeType: item.mimeType || "application/octet-stream",
+      bytes: Buffer.from(item.bytes),
+    };
+  }
+
+  if (item.type === "text") {
+    const fileName = `note-${String(item.id || "item").slice(0, 8)}.txt`;
+    return {
+      fileName,
+      mimeType: "text/plain",
+      bytes: Buffer.from(String(item.text || ""), "utf8"),
+    };
+  }
+
+  throw new Error(`Unsupported drag item type: ${item.type}`);
+}
+
+function exportDragFile(item) {
+  const descriptor = getDragArtifactDescriptor(item);
 
   if (!fsSync.existsSync(dragExportDir)) {
     fsSync.mkdirSync(dragExportDir, { recursive: true });
     logDragDebug("drag.export-dir.created", { dragExportDir });
   }
 
-  const safeName = sanitizeFileName(
-    path.basename(item.fileName || ""),
-    `file-${item.id}`
-  );
+  const safeName = sanitizeFileName(descriptor.fileName, `artifact-${item.id}`);
   const targetPath = path.join(dragExportDir, `${item.id}-${safeName}`);
-  fsSync.writeFileSync(targetPath, item.bytes);
+  fsSync.writeFileSync(targetPath, descriptor.bytes);
   logDragDebug("drag.temp-file.written", {
     itemId: item.id,
     targetPath,
-    writtenBytes: item.bytes.length,
+    writtenBytes: descriptor.bytes.length,
     exists: fsSync.existsSync(targetPath),
+    fileName: safeName,
+    mimeType: descriptor.mimeType,
   });
 
-  return targetPath;
+  return {
+    path: targetPath,
+    fileName: safeName,
+    mimeType: descriptor.mimeType,
+  };
 }
 
 function normalizePeerUrl(input) {
@@ -619,7 +649,7 @@ ipcMain.on("items:startDrag", (event, itemId) => {
   try {
     logDragDebug("drag.ipc.received", { itemId });
     const item = getReceivedItem(itemId);
-    if (!item || item.type !== "file") {
+    if (!item || (item.type !== "file" && item.type !== "text")) {
       logDragDebug("drag.item.invalid", { itemId, itemType: item?.type });
       return;
     }
@@ -627,36 +657,37 @@ ipcMain.on("items:startDrag", (event, itemId) => {
       itemId: item.id,
       fileName: item.fileName,
       mimeType: item.mimeType,
-      size: item.bytes?.length,
+      size: item.type === "file" ? item.bytes?.length : String(item.text || "").length,
+      itemType: item.type,
     });
 
     if (process.platform === "win32") {
       // Windows uses DownloadURL path from renderer to avoid native startDrag crash.
-      const targetPath = exportDragFile(item);
+      const exported = exportDragFile(item);
       logDragDebug("drag.startDrag.skipped-windows", {
         itemId: item.id,
-        targetPath,
+        targetPath: exported.path,
       });
       return;
     }
-    const targetPath = exportDragFile(item);
+    const exported = exportDragFile(item);
 
     const icon = buildDragIconFromItem(item);
     logDragDebug("drag.startDrag.before", {
       itemId: item.id,
-      targetPath,
+      targetPath: exported.path,
       iconEmpty: icon.isEmpty(),
       iconSize: icon.getSize(),
       platform: process.platform,
     });
 
     event.sender.startDrag({
-      file: targetPath,
+      file: exported.path,
       icon,
     });
     logDragDebug("drag.startDrag.after", {
       itemId: item.id,
-      targetPath,
+      targetPath: exported.path,
     });
   } catch (_error) {
     logDragDebug("drag.error", {
@@ -670,19 +701,19 @@ ipcMain.on("items:startDrag", (event, itemId) => {
 ipcMain.handle("items:getDragFilePath", async (_event, itemId) => {
   try {
     const item = getReceivedItem(itemId);
-    if (!item || item.type !== "file") {
-      throw new Error("File not found.");
+    if (!item || (item.type !== "file" && item.type !== "text")) {
+      throw new Error("Draggable item not found.");
     }
-    const targetPath = exportDragFile(item);
+    const exported = exportDragFile(item);
     logDragDebug("drag.get-path.success", {
       itemId: item.id,
-      targetPath,
+      targetPath: exported.path,
     });
     return {
       ok: true,
-      path: targetPath,
-      fileName: item.fileName,
-      mimeType: item.mimeType || "application/octet-stream",
+      path: exported.path,
+      fileName: exported.fileName,
+      mimeType: exported.mimeType,
     };
   } catch (error) {
     logDragDebug("drag.get-path.error", {

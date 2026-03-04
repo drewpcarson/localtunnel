@@ -20,6 +20,7 @@ const dragPathCache = new Map();
 const isWindows = navigator.platform.toLowerCase().includes("win");
 const DRAG_DEBUG_TAG = "[LT-DRAGDBG]";
 const debugLastAt = new Map();
+let lastTextDragAt = 0;
 
 function debugLog(message, context = {}, debounceMs = 0) {
   const now = Date.now();
@@ -81,7 +82,7 @@ async function refreshReceivedArtifacts() {
   debugLog("artifacts.refresh.start");
   receivedItems = await window.lanTunnel.listItems();
   for (const item of receivedItems) {
-    if (item.type === "file") {
+    if (item.type === "file" || item.type === "text") {
       void ensureDragPath(item.id);
     }
   }
@@ -168,6 +169,7 @@ function renderOrbitArtifacts() {
       const doc = document.createElement("button");
       doc.className = "artifact text";
       doc.title = "Copy text to clipboard";
+      doc.draggable = true;
       doc.innerHTML = `
         <svg viewBox="0 0 64 78" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <rect x="8" y="6" width="48" height="66" rx="8" fill="#f8fbff" stroke="#89c6ff" stroke-width="2"/>
@@ -179,7 +181,26 @@ function renderOrbitArtifacts() {
           <text x="48" y="61.5" text-anchor="middle" font-size="8" fill="#04304d" font-weight="700">TXT</text>
         </svg>
       `;
+      doc.addEventListener("dragstart", (event) => {
+        event.dataTransfer.effectAllowed = "copy";
+        lastTextDragAt = Date.now();
+        debugLog("artifact.text.dragstart", {
+          itemId: item.id,
+          textLength: (item.text || item.textPreview || "").length,
+        });
+        if (isWindows) {
+          attachWindowsDownloadData(event, item);
+        } else {
+          window.lanTunnel.startFileDrag(item.id);
+        }
+      });
+      doc.addEventListener("dragend", () => {
+        debugLog("artifact.text.dragend", { itemId: item.id });
+      });
       doc.addEventListener("click", async () => {
+        if (Date.now() - lastTextDragAt < 250) {
+          return;
+        }
         debugLog("artifact.text.click-copy", {
           itemId: item.id,
           textLength: (item.text || item.textPreview || "").length,
