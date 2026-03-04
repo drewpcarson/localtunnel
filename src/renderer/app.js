@@ -9,6 +9,7 @@ const pairRequestModal = document.getElementById("pairRequestModal");
 const pairRequestText = document.getElementById("pairRequestText");
 const pairAcceptBtn = document.getElementById("pairAcceptBtn");
 const pairDeclineBtn = document.getElementById("pairDeclineBtn");
+const checkUpdatesBtn = document.getElementById("checkUpdatesBtn");
 
 let peers = [];
 let receivedItems = [];
@@ -19,31 +20,10 @@ const isWindows = navigator.platform.toLowerCase().includes("win");
 let lastTextDragAt = 0;
 const ARTIFACT_LIFETIME_MS = 30000;
 let artifactTicker = null;
+let updateReadyToInstall = false;
+let updatesEnabled = false;
 
 function debugLog() {}
-const WIN_DROP_TAG = "[LT-WINDROPDBG]";
-const dropDebugDebounce = new Map();
-
-function debugDrop(message, context = {}, debounceMs = 0) {
-  const now = Date.now();
-  if (debounceMs > 0) {
-    const key = `${message}:${context?.key || ""}`;
-    const last = dropDebugDebounce.get(key) || 0;
-    if (now - last < debounceMs) {
-      return;
-    }
-    dropDebugDebounce.set(key, now);
-  }
-  const payload = {
-    message,
-    ...context,
-    ts: new Date(now).toISOString(),
-  };
-  console.log(`${WIN_DROP_TAG} ${message}`, payload);
-  if (typeof window.lanTunnel?.debugDropLog === "function") {
-    window.lanTunnel.debugDropLog(payload);
-  }
-}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -165,26 +145,7 @@ function attachDownloadData(event, item) {
   return true;
 }
 
-function describeDataTransfer(dt) {
-  if (!dt) {
-    return { hasDataTransfer: false };
-  }
-  let types = [];
-  try {
-    types = Array.from(dt.types || []);
-  } catch (_error) {
-    types = [];
-  }
-  return {
-    hasDataTransfer: true,
-    fileCount: dt.files?.length || 0,
-    types,
-    dropEffect: dt.dropEffect || "",
-    effectAllowed: dt.effectAllowed || "",
-  };
-}
-
-function markWindowDropAllowed(event, source, stopPropagation = false) {
+function markWindowDropAllowed(event, stopPropagation = false) {
   event.preventDefault();
   if (stopPropagation) {
     event.stopPropagation();
@@ -193,7 +154,6 @@ function markWindowDropAllowed(event, source, stopPropagation = false) {
     event.dataTransfer.dropEffect = "copy";
   }
   dropZone.classList.add("drag-over");
-  debugDrop(`${source}.allow-drop`, describeDataTransfer(event.dataTransfer), 250);
 }
 
 function renderOrbitArtifacts() {
@@ -465,6 +425,26 @@ openAppFolderBtn.addEventListener("click", async () => {
   }
 });
 
+checkUpdatesBtn.addEventListener("click", async () => {
+  try {
+    if (!updatesEnabled) {
+      setStatus("Updates are available in packaged app builds.");
+      return;
+    }
+
+    if (updateReadyToInstall) {
+      setStatus("Installing update and restarting...");
+      await window.lanTunnel.installUpdate();
+      return;
+    }
+
+    setStatus("Checking for updates...");
+    await window.lanTunnel.checkForUpdates();
+  } catch (error) {
+    setStatus(error.message || "Unable to update right now.", true);
+  }
+});
+
 window.addEventListener("paste", async (event) => {
   const targetTag = (event.target?.tagName || "").toLowerCase();
   if (targetTag === "input" || targetTag === "textarea") {
@@ -487,7 +467,6 @@ window.addEventListener("paste", async (event) => {
 window.addEventListener("dragleave", (event) => {
   if (!event.relatedTarget) {
     dropZone.classList.remove("drag-over");
-    debugDrop("window.dragleave", { key: "window" }, 250);
   }
 });
 
@@ -508,41 +487,40 @@ async function handleInboundDrop(dataTransfer) {
 }
 
 function installGlobalDropTargets() {
-  const allow = (event, source) => {
-    markWindowDropAllowed(event, source, true);
+  const allow = (event) => {
+    markWindowDropAllowed(event, true);
   };
 
-  const drop = async (event, source) => {
+  const drop = async (event) => {
     event.preventDefault();
     event.stopPropagation();
     dropZone.classList.remove("drag-over");
-    debugDrop(source, describeDataTransfer(event.dataTransfer));
     await handleInboundDrop(event.dataTransfer);
   };
 
-  window.addEventListener("dragenter", (event) => allow(event, "window.dragenter"), true);
-  window.addEventListener("dragover", (event) => allow(event, "window.dragover"), true);
+  window.addEventListener("dragenter", (event) => allow(event), true);
+  window.addEventListener("dragover", (event) => allow(event), true);
   window.addEventListener("drop", (event) => {
-    void drop(event, "window.drop");
+    void drop(event);
   }, true);
 
-  document.addEventListener("dragenter", (event) => allow(event, "document.dragenter"), true);
-  document.addEventListener("dragover", (event) => allow(event, "document.dragover"), true);
+  document.addEventListener("dragenter", (event) => allow(event), true);
+  document.addEventListener("dragover", (event) => allow(event), true);
   document.addEventListener("drop", (event) => {
-    void drop(event, "document.drop");
+    void drop(event);
   }, true);
 
-  document.documentElement.ondragenter = (event) => allow(event, "html.ondragenter");
-  document.documentElement.ondragover = (event) => allow(event, "html.ondragover");
+  document.documentElement.ondragenter = (event) => allow(event);
+  document.documentElement.ondragover = (event) => allow(event);
   document.documentElement.ondrop = (event) => {
-    void drop(event, "html.ondrop");
+    void drop(event);
   };
 
   if (document.body) {
-    document.body.ondragenter = (event) => allow(event, "body.ondragenter");
-    document.body.ondragover = (event) => allow(event, "body.ondragover");
+    document.body.ondragenter = (event) => allow(event);
+    document.body.ondragover = (event) => allow(event);
     document.body.ondrop = (event) => {
-      void drop(event, "body.ondrop");
+      void drop(event);
     };
   }
 }
@@ -593,6 +571,23 @@ window.lanTunnel.onRecoveryStatus((payload) => {
   }
 });
 
+window.lanTunnel.onUpdateStatus((payload) => {
+  if (!payload) {
+    return;
+  }
+  if (payload.stage === "downloaded") {
+    updateReadyToInstall = true;
+    checkUpdatesBtn.textContent = "Restart to Update";
+  } else if (payload.stage === "not-available" || payload.stage === "error") {
+    updateReadyToInstall = false;
+    checkUpdatesBtn.textContent = "Update";
+  }
+
+  if (payload.message) {
+    setStatus(payload.message, Boolean(payload.isError) || payload.stage === "error");
+  }
+});
+
 pairAcceptBtn.addEventListener("click", async () => {
   if (!currentPairRequest) {
     return;
@@ -632,15 +627,12 @@ pairDeclineBtn.addEventListener("click", async () => {
 
 async function init() {
   installGlobalDropTargets();
-  debugDrop("init.drop-hooks-installed", {
-    platform: navigator.platform,
-    hasDebugBridge: typeof window.lanTunnel?.debugDropLog === "function",
-  });
   debugLog("init.start", { platform: navigator.platform });
   const appInfo = await window.lanTunnel.appInfo();
   peers = appInfo.peers || [];
   activePeerUrl = appInfo.activePeerUrl || "";
   const windowsIntegrityLevel = String(appInfo.windowsIntegrityLevel || "");
+  updatesEnabled = Boolean(appInfo.updatesEnabled);
 
   setupPanel.classList.add("hidden");
   pairRequestModal.classList.add("hidden");
@@ -655,6 +647,10 @@ async function init() {
   }, 500);
   peers = await window.lanTunnel.listPeers();
   renderPeers();
+  checkUpdatesBtn.disabled = !updatesEnabled;
+  checkUpdatesBtn.title = updatesEnabled
+    ? "Check for updates"
+    : "Available in packaged builds";
   if (isWindows && (windowsIntegrityLevel === "high" || windowsIntegrityLevel === "system")) {
     setStatus("Run portal without Administrator privileges to allow drag-in.", true);
   } else {

@@ -318,6 +318,11 @@ input {
   margin-bottom: 6px;
 }
 
+.update-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .peer-item,
 .received-item {
   border: 1px solid var(--line);
@@ -374,6 +379,11 @@ input {
 
 .mini-btn:hover {
   border-color: var(--line-bright);
+}
+
+.mini-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .mini-btn.paired-badge {

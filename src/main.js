@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const { execSync } = require("node:child_process");
+const { autoUpdater } = require("electron-updater");
 const {
   app,
   BrowserWindow,
@@ -42,14 +43,9 @@ const RECOVERY_FILE = "recovery-state.json";
 const RECOVERY_WINDOW_MS = 5 * 60 * 1000;
 const MAX_RECOVERY_RESTARTS = 3;
 let recoveryStatePath = "";
-const WIN_DROP_TAG = "[LT-WINDROPDBG]";
+let updateReadyToInstall = false;
 
 function logDragDebug() {}
-
-function logWinDrop(message, context = {}) {
-  const stamp = new Date().toISOString();
-  console.log(`${WIN_DROP_TAG} ${stamp} ${message}`, context);
-}
 
 function getWindowsIntegrityLevel() {
   if (process.platform !== "win32") {
@@ -398,6 +394,64 @@ function notifyRenderer(channel, payload) {
   }
 }
 
+function setupAutoUpdater() {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("checking-for-update", () => {
+    notifyRenderer("app:updateStatus", {
+      stage: "checking",
+      message: "Checking for updates...",
+    });
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    notifyRenderer("app:updateStatus", {
+      stage: "available",
+      version: info?.version || "",
+      message: `Update ${info?.version || ""} found. Downloading...`,
+    });
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    notifyRenderer("app:updateStatus", {
+      stage: "downloading",
+      percent: Number.isFinite(progress?.percent) ? Number(progress.percent.toFixed(1)) : 0,
+      message: `Downloading update (${Math.round(progress?.percent || 0)}%)...`,
+    });
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    updateReadyToInstall = true;
+    notifyRenderer("app:updateStatus", {
+      stage: "downloaded",
+      version: info?.version || "",
+      message: "Update ready. Click Update to restart and install.",
+      readyToInstall: true,
+    });
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    updateReadyToInstall = false;
+    notifyRenderer("app:updateStatus", {
+      stage: "not-available",
+      message: "You're on the latest version.",
+    });
+  });
+
+  autoUpdater.on("error", (error) => {
+    notifyRenderer("app:updateStatus", {
+      stage: "error",
+      message: `Update error: ${error?.message || String(error)}`,
+      isError: true,
+    });
+  });
+}
+
 function persistPairingState() {
   if (!pairingStatePath) {
     return;
@@ -509,22 +563,6 @@ function createWindow() {
     },
   });
 
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    logWinDrop("webcontents.will-navigate", { url });
-    if (url && /^file:\/\//i.test(url)) {
-      event.preventDefault();
-      logWinDrop("webcontents.blocked-file-navigation", { url });
-    }
-  });
-
-  mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
-    logWinDrop("webcontents.did-start-navigation", {
-      url,
-      isInPlace: Boolean(isInPlace),
-      isMainFrame: Boolean(isMainFrame),
-    });
-  });
-
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
@@ -612,10 +650,19 @@ app.whenReady().then(() => {
   });
 
   createWindow();
-  logWinDrop("process.integrity", {
-    platform: process.platform,
-    integrityLevel: getWindowsIntegrityLevel(),
-  });
+  setupAutoUpdater();
+  setTimeout(() => {
+    if (!app.isPackaged) {
+      return;
+    }
+    autoUpdater.checkForUpdates().catch((error) => {
+      notifyRenderer("app:updateStatus", {
+        stage: "error",
+        message: `Update check failed: ${error?.message || String(error)}`,
+        isError: true,
+      });
+    });
+  }, 5000);
   logDragDebug("window.created", {
     width: 420,
     height: 420,
@@ -694,6 +741,8 @@ ipcMain.handle("config:updateSharedKey", (_event, sharedKey) => {
 ipcMain.handle("app:info", () => {
   return {
     port: PORT,
+    appVersion: app.getVersion(),
+    updatesEnabled: app.isPackaged,
     peers: discoveredPeers,
     activePeerUrl: state.activePeerUrl,
     activePeerName: state.activePeerName,
@@ -711,6 +760,36 @@ ipcMain.handle("app:openAppFolder", async () => {
   }
   logDragDebug("app.folder.opened", { target });
   return { ok: true, path: target };
+});
+
+ipcMain.handle("app:checkForUpdates", async () => {
+  if (!app.isPackaged) {
+    return {
+      ok: false,
+      message: "Updates are only available in packaged builds.",
+    };
+  }
+
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return {
+      ok: true,
+      updateInfo: result?.updateInfo || null,
+    };
+  } catch (error) {
+    throw new Error(error?.message || "Failed to check for updates.");
+  }
+});
+
+ipcMain.handle("app:installUpdate", () => {
+  if (!app.isPackaged) {
+    throw new Error("Updates are only available in packaged builds.");
+  }
+  if (!updateReadyToInstall) {
+    throw new Error("No downloaded update is ready to install.");
+  }
+  autoUpdater.quitAndInstall();
+  return { ok: true };
 });
 
 ipcMain.handle("transfer:sendText", async (_event, { peerUrl, text }) => {
@@ -874,10 +953,6 @@ ipcMain.handle("items:getDragFilePath", async (_event, itemId) => {
     });
     throw error;
   }
-});
-
-ipcMain.on("debug:windrop", (_event, payload) => {
-  logWinDrop("renderer", payload || {});
 });
 
 ipcMain.handle("clipboard:writeText", (_event, text) => {

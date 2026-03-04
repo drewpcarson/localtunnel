@@ -7,7 +7,8 @@
     "test": "echo \"No tests yet\"",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:win": "electron-builder --win nsis"
+    "dist:win": "electron-builder --win nsis",
+    "dist:win:publish": "electron-builder --win nsis --publish always"
   },
   "keywords": [],
   "author": "",
@@ -35,10 +36,18 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "drewpcarson",
+        "repo": "localtunnel"
+      }
+    ]
   },
   "dependencies": {
     "cors": "^2.8.6",
+    "electron-updater": "^6.3.9",
     "express": "^5.2.1",
     "ws": "^8.19.0"
   },

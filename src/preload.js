@@ -11,8 +11,9 @@ contextBridge.exposeInMainWorld("lanTunnel", {
   saveFile: (itemId) => ipcRenderer.invoke("items:saveFile", itemId),
   startFileDrag: (itemId) => ipcRenderer.send("items:startDrag", itemId),
   getDragFilePath: (itemId) => ipcRenderer.invoke("items:getDragFilePath", itemId),
-  debugDropLog: (payload) => ipcRenderer.send("debug:windrop", payload),
   openAppFolder: () => ipcRenderer.invoke("app:openAppFolder"),
+  checkForUpdates: () => ipcRenderer.invoke("app:checkForUpdates"),
+  installUpdate: () => ipcRenderer.invoke("app:installUpdate"),
   writeClipboard: (text) => ipcRenderer.invoke("clipboard:writeText", text),
   listPeers: () => ipcRenderer.invoke("peers:list"),
   requestPairing: (payload) => ipcRenderer.invoke("pairing:request", payload),
@@ -51,5 +52,10 @@ contextBridge.exposeInMainWorld("lanTunnel", {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("app:recoveryStatus", listener);
     return () => ipcRenderer.removeListener("app:recoveryStatus", listener);
+  },
+  onUpdateStatus: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("app:updateStatus", listener);
+    return () => ipcRenderer.removeListener("app:updateStatus", listener);
   },
 });
