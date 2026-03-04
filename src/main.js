@@ -1,8 +1,9 @@
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
-const { app, BrowserWindow, ipcMain, dialog, clipboard } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage } = require("electron");
 const { encryptBuffer, keyFingerprint } = require("./crypto");
 const { startServer } = require("./server");
 const { startDiscovery } = require("./discovery");
@@ -23,6 +24,7 @@ let discoveryHandle;
 let discoveredPeers = [];
 const outgoingPairRequests = new Map();
 const incomingPairRequests = new Map();
+const dragExportDir = path.join(os.tmpdir(), "lan-paste-tunnel");
 
 function normalizePeerUrl(input) {
   if (!input || typeof input !== "string") {
@@ -276,6 +278,39 @@ ipcMain.handle("items:saveFile", async (_event, itemId) => {
 
   await fs.writeFile(result.filePath, item.bytes);
   return { saved: true, path: result.filePath };
+});
+
+ipcMain.on("items:startDrag", (event, itemId) => {
+  try {
+    const item = getReceivedItem(itemId);
+    if (!item || item.type !== "file") {
+      return;
+    }
+
+    if (!fsSync.existsSync(dragExportDir)) {
+      fsSync.mkdirSync(dragExportDir, { recursive: true });
+    }
+
+    const safeName = path.basename(item.fileName || `file-${item.id}`);
+    const targetPath = path.join(dragExportDir, `${item.id}-${safeName}`);
+    fsSync.writeFileSync(targetPath, item.bytes);
+
+    let icon = nativeImage.createEmpty();
+    if (item.mimeType?.startsWith("image/")) {
+      try {
+        icon = nativeImage.createFromBuffer(item.bytes);
+      } catch (_error) {
+        icon = nativeImage.createEmpty();
+      }
+    }
+
+    event.sender.startDrag({
+      file: targetPath,
+      icon,
+    });
+  } catch (_error) {
+    // Ignore drag export failures silently to keep UI responsive.
+  }
 });
 
 ipcMain.handle("clipboard:writeText", (_event, text) => {

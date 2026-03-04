@@ -12,7 +12,15 @@ function listReceivedItems() {
     fileName: item.fileName,
     mimeType: item.mimeType,
     size: item.size,
-    textPreview: item.type === "text" ? item.text.slice(0, 2000) : "",
+    text: item.type === "text" ? item.text : "",
+    textPreview: item.type === "text" ? item.text.slice(0, 120) : "",
+    isImage: item.type === "file" ? item.mimeType?.startsWith("image/") : false,
+    previewDataUrl:
+      item.type === "file" &&
+      item.mimeType?.startsWith("image/") &&
+      item.size <= 8 * 1024 * 1024
+        ? `data:${item.mimeType};base64,${item.bytes.toString("base64")}`
+        : "",
   }));
 }
 

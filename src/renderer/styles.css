@@ -107,6 +107,73 @@ body {
   color: var(--muted);
 }
 
+.orbit-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.orbit-item {
+  position: absolute;
+  left: var(--x, 50%);
+  top: var(--y, 50%);
+  transform: translate(-50%, -50%);
+  animation: float-drift var(--dur, 22s) ease-in-out var(--delay, 0s) infinite alternate;
+  pointer-events: auto;
+}
+
+.artifact {
+  border: 1px solid var(--line);
+  background: rgba(12, 21, 46, 0.74);
+  border-radius: 10px;
+  box-shadow: 0 8px 14px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(3px);
+}
+
+.artifact:hover {
+  border-color: var(--line-bright);
+  box-shadow: 0 0 14px rgba(120, 208, 255, 0.25);
+}
+
+.artifact.image {
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.artifact.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.artifact.file-generic {
+  width: 66px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: grab;
+}
+
+.artifact.text {
+  width: 52px;
+  height: 62px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.artifact.text svg {
+  width: 42px;
+  height: 52px;
+  display: block;
+}
+
 .menu-overlay {
   position: absolute;
   top: 8px;
@@ -375,5 +442,19 @@ input {
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes float-drift {
+  0% {
+    transform: translate(-50%, -50%) translate(0, 0) rotate(-1deg);
+  }
+  50% {
+    transform: translate(-50%, -50%) translate(var(--dx, 10px), var(--dy, -8px))
+      rotate(1deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) translate(calc(var(--dx, 10px) * -1), calc(var(--dy, -8px) * -1))
+      rotate(-1deg);
   }
 }

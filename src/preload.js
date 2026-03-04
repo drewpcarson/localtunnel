@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("lanTunnel", {
   sendFile: (payload) => ipcRenderer.invoke("transfer:sendFile", payload),
   listItems: () => ipcRenderer.invoke("items:list"),
   saveFile: (itemId) => ipcRenderer.invoke("items:saveFile", itemId),
+  startFileDrag: (itemId) => ipcRenderer.send("items:startDrag", itemId),
   writeClipboard: (text) => ipcRenderer.invoke("clipboard:writeText", text),
   listPeers: () => ipcRenderer.invoke("peers:list"),
   requestPairing: (payload) => ipcRenderer.invoke("pairing:request", payload),
