@@ -40,7 +40,9 @@ function debugDrop(message, context = {}, debounceMs = 0) {
     ts: new Date(now).toISOString(),
   };
   console.log(`${WIN_DROP_TAG} ${message}`, payload);
-  window.lanTunnel.debugDropLog(payload);
+  if (typeof window.lanTunnel?.debugDropLog === "function") {
+    window.lanTunnel.debugDropLog(payload);
+  }
 }
 
 function setStatus(message, isError = false) {
@@ -482,14 +484,6 @@ window.addEventListener("paste", async (event) => {
   }
 });
 
-dropZone.addEventListener("dragover", (event) => {
-  markWindowDropAllowed(event, "dropzone.dragover", true);
-});
-
-dropZone.addEventListener("dragenter", (event) => {
-  markWindowDropAllowed(event, "dropzone.dragenter", true);
-});
-
 window.addEventListener("dragleave", (event) => {
   if (!event.relatedTarget) {
     dropZone.classList.remove("drag-over");
@@ -513,36 +507,45 @@ async function handleInboundDrop(dataTransfer) {
   }
 }
 
-dropZone.addEventListener("drop", async (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  dropZone.classList.remove("drag-over");
-  debugDrop("dropzone.drop", describeDataTransfer(event.dataTransfer));
-  await handleInboundDrop(event.dataTransfer);
-});
+function installGlobalDropTargets() {
+  const allow = (event, source) => {
+    markWindowDropAllowed(event, source, true);
+  };
 
-window.addEventListener("dragenter", (event) => {
-  markWindowDropAllowed(event, "window.dragenter");
-});
+  const drop = async (event, source) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dropZone.classList.remove("drag-over");
+    debugDrop(source, describeDataTransfer(event.dataTransfer));
+    await handleInboundDrop(event.dataTransfer);
+  };
 
-window.addEventListener("dragover", (event) => {
-  markWindowDropAllowed(event, "window.dragover");
-});
+  window.addEventListener("dragenter", (event) => allow(event, "window.dragenter"), true);
+  window.addEventListener("dragover", (event) => allow(event, "window.dragover"), true);
+  window.addEventListener("drop", (event) => {
+    void drop(event, "window.drop");
+  }, true);
 
-document.addEventListener("dragenter", (event) => {
-  markWindowDropAllowed(event, "document.dragenter");
-}, true);
+  document.addEventListener("dragenter", (event) => allow(event, "document.dragenter"), true);
+  document.addEventListener("dragover", (event) => allow(event, "document.dragover"), true);
+  document.addEventListener("drop", (event) => {
+    void drop(event, "document.drop");
+  }, true);
 
-document.addEventListener("dragover", (event) => {
-  markWindowDropAllowed(event, "document.dragover");
-}, true);
+  document.documentElement.ondragenter = (event) => allow(event, "html.ondragenter");
+  document.documentElement.ondragover = (event) => allow(event, "html.ondragover");
+  document.documentElement.ondrop = (event) => {
+    void drop(event, "html.ondrop");
+  };
 
-window.addEventListener("drop", async (event) => {
-  event.preventDefault();
-  dropZone.classList.remove("drag-over");
-  debugDrop("window.drop", describeDataTransfer(event.dataTransfer));
-  await handleInboundDrop(event.dataTransfer);
-});
+  if (document.body) {
+    document.body.ondragenter = (event) => allow(event, "body.ondragenter");
+    document.body.ondragover = (event) => allow(event, "body.ondragover");
+    document.body.ondrop = (event) => {
+      void drop(event, "body.ondrop");
+    };
+  }
+}
 
 window.lanTunnel.onIncomingItem(async () => {
   debugLog("incoming.item.event");
@@ -628,6 +631,11 @@ pairDeclineBtn.addEventListener("click", async () => {
 });
 
 async function init() {
+  installGlobalDropTargets();
+  debugDrop("init.drop-hooks-installed", {
+    platform: navigator.platform,
+    hasDebugBridge: typeof window.lanTunnel?.debugDropLog === "function",
+  });
   debugLog("init.start", { platform: navigator.platform });
   const appInfo = await window.lanTunnel.appInfo();
   peers = appInfo.peers || [];
