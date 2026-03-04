@@ -4,16 +4,46 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "echo \"No tests yet\""
+    "test": "echo \"No tests yet\"",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win nsis"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "LAN clipboard and file transfer desktop app",
+  "build": {
+    "appId": "com.drewpcarson.localtunnel",
+    "productName": "LocalTunnel Portal",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
   "dependencies": {
     "cors": "^2.8.6",
     "electron": "^40.7.0",
     "express": "^5.2.1",
     "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.3"
   }
 }
