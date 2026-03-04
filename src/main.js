@@ -41,8 +41,14 @@ const RECOVERY_FILE = "recovery-state.json";
 const RECOVERY_WINDOW_MS = 5 * 60 * 1000;
 const MAX_RECOVERY_RESTARTS = 3;
 let recoveryStatePath = "";
+const WIN_DROP_TAG = "[LT-WINDROPDBG]";
 
 function logDragDebug() {}
+
+function logWinDrop(message, context = {}) {
+  const stamp = new Date().toISOString();
+  console.log(`${WIN_DROP_TAG} ${stamp} ${message}`, context);
+}
 
 function readRecoveryState() {
   try {
@@ -818,6 +824,10 @@ ipcMain.handle("items:getDragFilePath", async (_event, itemId) => {
     });
     throw error;
   }
+});
+
+ipcMain.on("debug:windrop", (_event, payload) => {
+  logWinDrop("renderer", payload || {});
 });
 
 ipcMain.handle("clipboard:writeText", (_event, text) => {

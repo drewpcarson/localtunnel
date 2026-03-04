@@ -21,6 +21,27 @@ const ARTIFACT_LIFETIME_MS = 30000;
 let artifactTicker = null;
 
 function debugLog() {}
+const WIN_DROP_TAG = "[LT-WINDROPDBG]";
+const dropDebugDebounce = new Map();
+
+function debugDrop(message, context = {}, debounceMs = 0) {
+  const now = Date.now();
+  if (debounceMs > 0) {
+    const key = `${message}:${context?.key || ""}`;
+    const last = dropDebugDebounce.get(key) || 0;
+    if (now - last < debounceMs) {
+      return;
+    }
+    dropDebugDebounce.set(key, now);
+  }
+  const payload = {
+    message,
+    ...context,
+    ts: new Date(now).toISOString(),
+  };
+  console.log(`${WIN_DROP_TAG} ${message}`, payload);
+  window.lanTunnel.debugDropLog(payload);
+}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -140,6 +161,37 @@ function attachDownloadData(event, item) {
     mimeType,
   });
   return true;
+}
+
+function describeDataTransfer(dt) {
+  if (!dt) {
+    return { hasDataTransfer: false };
+  }
+  let types = [];
+  try {
+    types = Array.from(dt.types || []);
+  } catch (_error) {
+    types = [];
+  }
+  return {
+    hasDataTransfer: true,
+    fileCount: dt.files?.length || 0,
+    types,
+    dropEffect: dt.dropEffect || "",
+    effectAllowed: dt.effectAllowed || "",
+  };
+}
+
+function markWindowDropAllowed(event, source, stopPropagation = false) {
+  event.preventDefault();
+  if (stopPropagation) {
+    event.stopPropagation();
+  }
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+  dropZone.classList.add("drag-over");
+  debugDrop(`${source}.allow-drop`, describeDataTransfer(event.dataTransfer), 250);
 }
 
 function renderOrbitArtifacts() {
@@ -431,17 +483,17 @@ window.addEventListener("paste", async (event) => {
 });
 
 dropZone.addEventListener("dragover", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  event.dataTransfer.dropEffect = "copy";
-  dropZone.classList.add("drag-over");
-  debugLog("dropzone.dragover", { key: "dropzone" }, 400);
+  markWindowDropAllowed(event, "dropzone.dragover", true);
+});
+
+dropZone.addEventListener("dragenter", (event) => {
+  markWindowDropAllowed(event, "dropzone.dragenter", true);
 });
 
 window.addEventListener("dragleave", (event) => {
   if (!event.relatedTarget) {
     dropZone.classList.remove("drag-over");
-    debugLog("dropzone.dragleave-window", { key: "dropzone" }, 400);
+    debugDrop("window.dragleave", { key: "window" }, 250);
   }
 });
 
@@ -465,23 +517,30 @@ dropZone.addEventListener("drop", async (event) => {
   event.preventDefault();
   event.stopPropagation();
   dropZone.classList.remove("drag-over");
-  debugLog("dropzone.drop", {
-    fileCount: event.dataTransfer?.files?.length || 0,
-  });
+  debugDrop("dropzone.drop", describeDataTransfer(event.dataTransfer));
   await handleInboundDrop(event.dataTransfer);
 });
 
-window.addEventListener("dragover", (event) => {
-  event.preventDefault();
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = "copy";
-  }
-  dropZone.classList.add("drag-over");
+window.addEventListener("dragenter", (event) => {
+  markWindowDropAllowed(event, "window.dragenter");
 });
+
+window.addEventListener("dragover", (event) => {
+  markWindowDropAllowed(event, "window.dragover");
+});
+
+document.addEventListener("dragenter", (event) => {
+  markWindowDropAllowed(event, "document.dragenter");
+}, true);
+
+document.addEventListener("dragover", (event) => {
+  markWindowDropAllowed(event, "document.dragover");
+}, true);
 
 window.addEventListener("drop", async (event) => {
   event.preventDefault();
   dropZone.classList.remove("drag-over");
+  debugDrop("window.drop", describeDataTransfer(event.dataTransfer));
   await handleInboundDrop(event.dataTransfer);
 });
 
