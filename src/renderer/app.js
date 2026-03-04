@@ -1,6 +1,5 @@
 const peerUrlInput = document.getElementById("peerUrl");
 const toggleSetupBtn = document.getElementById("toggleSetupBtn");
-const copyEndpointBtn = document.getElementById("copyEndpointBtn");
 const setupPanel = document.getElementById("setupContent");
 const pairStatusEl = document.getElementById("pairStatus");
 const localUrlList = document.getElementById("localUrlList");
@@ -17,6 +16,8 @@ let endpoints = [];
 let peers = [];
 let receivedItems = [];
 let currentPairRequest = null;
+const dragPathCache = new Map();
+const isWindows = navigator.platform.toLowerCase().includes("win");
 const DRAG_DEBUG_TAG = "[LT-DRAGDBG]";
 const debugLastAt = new Map();
 
@@ -79,10 +80,69 @@ function artifactVarsFor(item, index) {
 async function refreshReceivedArtifacts() {
   debugLog("artifacts.refresh.start");
   receivedItems = await window.lanTunnel.listItems();
+  for (const item of receivedItems) {
+    if (item.type === "file") {
+      void ensureDragPath(item.id);
+    }
+  }
   debugLog("artifacts.refresh.done", {
     count: receivedItems.length,
   });
   renderOrbitArtifacts();
+}
+
+async function ensureDragPath(itemId) {
+  if (dragPathCache.has(itemId)) {
+    return dragPathCache.get(itemId);
+  }
+  try {
+    const result = await window.lanTunnel.getDragFilePath(itemId);
+    dragPathCache.set(itemId, result);
+    debugLog("drag.path.cached", {
+      itemId,
+      path: result?.path,
+    });
+    return result;
+  } catch (error) {
+    debugLog("drag.path.cache-error", {
+      itemId,
+      error: error?.message || String(error),
+    });
+    return null;
+  }
+}
+
+function filePathToFileUrl(filePath) {
+  const normalized = String(filePath || "").replace(/\\/g, "/");
+  return encodeURI(`file:///${normalized.replace(/^\/+/, "")}`);
+}
+
+function attachWindowsDownloadData(event, item) {
+  const cached = dragPathCache.get(item.id);
+  if (!cached?.path) {
+    debugLog("artifact.drag.windows.no-cached-path", {
+      itemId: item.id,
+      fileName: item.fileName,
+    });
+    event.preventDefault();
+    void ensureDragPath(item.id);
+    setStatus("Preparing artifact for drag. Try again.", true);
+    return false;
+  }
+
+  const fileUrl = filePathToFileUrl(cached.path);
+  const mimeType = cached.mimeType || item.mimeType || "application/octet-stream";
+  const fileName = cached.fileName || item.fileName || "artifact.bin";
+  event.dataTransfer.setData("DownloadURL", `${mimeType}:${fileName}:${fileUrl}`);
+  event.dataTransfer.setData("text/uri-list", fileUrl);
+  event.dataTransfer.setData("text/plain", cached.path);
+  debugLog("artifact.drag.windows.downloadurl-set", {
+    itemId: item.id,
+    fileUrl,
+    fileName,
+    mimeType,
+  });
+  return true;
 }
 
 function renderOrbitArtifacts() {
@@ -145,7 +205,11 @@ function renderOrbitArtifacts() {
           mimeType: item.mimeType,
           preview: Boolean(item.previewDataUrl),
         });
-        window.lanTunnel.startFileDrag(item.id);
+        if (isWindows) {
+          attachWindowsDownloadData(event, item);
+        } else {
+          window.lanTunnel.startFileDrag(item.id);
+        }
       });
       wrap.addEventListener("dragend", () => {
         debugLog("artifact.image.dragend", { itemId: item.id });
@@ -166,7 +230,11 @@ function renderOrbitArtifacts() {
           fileName: item.fileName,
           mimeType: item.mimeType,
         });
-        window.lanTunnel.startFileDrag(item.id);
+        if (isWindows) {
+          attachWindowsDownloadData(event, item);
+        } else {
+          window.lanTunnel.startFileDrag(item.id);
+        }
       });
       generic.addEventListener("dragend", () => {
         debugLog("artifact.file.dragend", { itemId: item.id });
@@ -267,16 +335,6 @@ async function sendFile(file) {
 
 toggleSetupBtn.addEventListener("click", () => {
   setupPanel.classList.toggle("hidden");
-});
-
-copyEndpointBtn.addEventListener("click", async () => {
-  const preferred = endpoints.find((url) => !url.includes("localhost")) || endpoints[0];
-  if (!preferred) {
-    setStatus("No endpoint available.", true);
-    return;
-  }
-  await window.lanTunnel.writeClipboard(preferred);
-  setStatus("Endpoint copied.");
 });
 
 window.addEventListener("paste", async (event) => {
