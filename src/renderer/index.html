@@ -12,19 +12,18 @@
       <div class="portal-ring"></div>
 
       <div class="menu-overlay left">
-        <button id="toggleSetupBtn" class="icon-btn" title="Setup">⚙</button>
+        <button id="toggleSetupBtn" class="icon-btn" title="Setup">
+          <img src="./icon-gear.svg" alt="Setup" width="14" height="14" />
+        </button>
+        <button id="openAppFolderBtn" class="icon-btn" title="Open app folder">
+          <img src="./icon-folder.svg" alt="Folder" width="14" height="14" />
+        </button>
       </div>
 
       <section id="setupContent" class="overlay-panel hidden">
         <h2>Setup</h2>
-        <div id="pairStatus" class="pair-status">Not paired</div>
-        <label>
-          Peer address
-          <input id="peerUrl" type="text" placeholder="192.168.1.23:43827" />
-        </label>
         <h3>Nearby devices</h3>
         <ul id="peerList" class="peer-list"></ul>
-        <ul id="localUrlList" class="local-url-list"></ul>
       </section>
 
       <div id="orbitLayer" class="orbit-layer" aria-label="Received artifacts"></div>

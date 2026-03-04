@@ -1,8 +1,6 @@
-const peerUrlInput = document.getElementById("peerUrl");
 const toggleSetupBtn = document.getElementById("toggleSetupBtn");
+const openAppFolderBtn = document.getElementById("openAppFolderBtn");
 const setupPanel = document.getElementById("setupContent");
-const pairStatusEl = document.getElementById("pairStatus");
-const localUrlList = document.getElementById("localUrlList");
 const peerList = document.getElementById("peerList");
 const dropZone = document.getElementById("dropZone");
 const orbitLayer = document.getElementById("orbitLayer");
@@ -12,44 +10,19 @@ const pairRequestText = document.getElementById("pairRequestText");
 const pairAcceptBtn = document.getElementById("pairAcceptBtn");
 const pairDeclineBtn = document.getElementById("pairDeclineBtn");
 
-let endpoints = [];
 let peers = [];
 let receivedItems = [];
 let currentPairRequest = null;
+let activePeerUrl = "";
 const dragPathCache = new Map();
 const isWindows = navigator.platform.toLowerCase().includes("win");
-const DRAG_DEBUG_TAG = "[LT-DRAGDBG]";
-const debugLastAt = new Map();
 let lastTextDragAt = 0;
 
-function debugLog(message, context = {}, debounceMs = 0) {
-  const now = Date.now();
-  if (debounceMs > 0) {
-    const key = `${message}:${context?.key || ""}`;
-    const last = debugLastAt.get(key) || 0;
-    if (now - last < debounceMs) {
-      return;
-    }
-    debugLastAt.set(key, now);
-  }
-  const payload = {
-    message,
-    ...context,
-    ts: new Date(now).toISOString(),
-  };
-  console.log(`${DRAG_DEBUG_TAG} ${message}`, payload);
-  if (window.lanTunnel?.debugLog) {
-    window.lanTunnel.debugLog(payload);
-  }
-}
+function debugLog() {}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
   statusEl.style.color = isError ? "#ff9fba" : "#9cbad6";
-}
-
-function setPairStatus(message) {
-  pairStatusEl.textContent = message;
 }
 
 function hashValue(input) {
@@ -280,6 +253,11 @@ function renderPeers() {
   for (const peer of peers) {
     const li = document.createElement("li");
     li.className = "peer-item";
+    
+    const isActive = activePeerUrl && peer.endpoint === activePeerUrl;
+    if (isActive) {
+      li.classList.add("active-peer");
+    }
 
     const main = document.createElement("div");
     main.className = "peer-main";
@@ -293,22 +271,32 @@ function renderPeers() {
     main.appendChild(endpoint);
     li.appendChild(main);
 
-    const pairBtn = document.createElement("button");
-    pairBtn.className = "mini-btn";
-    pairBtn.textContent = "Pair";
-    pairBtn.addEventListener("click", async () => {
-      try {
-        await window.lanTunnel.requestPairing({
-          peerEndpoint: peer.endpoint,
-          peerName: peer.name,
-        });
-        peerUrlInput.value = peer.endpoint;
-        setStatus(`Request sent to ${peer.name}...`);
-      } catch (error) {
-        setStatus(error.message || "Unable to send pairing request.", true);
-      }
-    });
-    li.appendChild(pairBtn);
+    if (isActive) {
+      const checkIcon = document.createElement("div");
+      checkIcon.className = "mini-btn icon-only-btn paired-badge";
+      checkIcon.title = "Actively paired";
+      checkIcon.innerHTML = '<img src="./icon-check.svg" alt="Paired" width="14" height="14" />';
+      li.appendChild(checkIcon);
+    } else {
+      const pairBtn = document.createElement("button");
+      pairBtn.className = "mini-btn icon-only-btn";
+      pairBtn.title = "Pair";
+      pairBtn.innerHTML = '<img src="./icon-pair.svg" alt="Pair" width="12" height="12" />';
+      pairBtn.addEventListener("click", async () => {
+        try {
+          await window.lanTunnel.requestPairing({
+            peerEndpoint: peer.endpoint,
+            peerName: peer.name,
+          });
+          setStatus(`Request sent to ${peer.name}...`);
+          renderPeers();
+        } catch (error) {
+          setStatus(error.message || "Unable to send pairing request.", true);
+        }
+      });
+      li.appendChild(pairBtn);
+    }
+    
     peerList.appendChild(li);
   }
 }
@@ -318,7 +306,7 @@ async function sendText(text) {
     if (!text.trim()) {
       return;
     }
-    await window.lanTunnel.sendText({ peerUrl: peerUrlInput.value, text });
+    await window.lanTunnel.sendText({ text });
     setStatus("Text tunneled.");
   } catch (error) {
     setStatus(error.message || "Failed to send text.", true);
@@ -334,7 +322,6 @@ async function sendFile(file) {
     });
     const bytes = new Uint8Array(await file.arrayBuffer());
     await window.lanTunnel.sendFile({
-      peerUrl: peerUrlInput.value,
       file: {
         name: file.name,
         mimeType: file.type,
@@ -356,6 +343,32 @@ async function sendFile(file) {
 
 toggleSetupBtn.addEventListener("click", () => {
   setupPanel.classList.toggle("hidden");
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (setupPanel.classList.contains("hidden")) {
+    return;
+  }
+
+  const target = event.target;
+  if (setupPanel.contains(target) || toggleSetupBtn.contains(target)) {
+    return;
+  }
+
+  setupPanel.classList.add("hidden");
+});
+
+openAppFolderBtn.addEventListener("click", async () => {
+  try {
+    const result = await window.lanTunnel.openAppFolder();
+    setStatus("Opened app folder.");
+    debugLog("app-folder.opened", { path: result?.path });
+  } catch (error) {
+    setStatus("Unable to open app folder.", true);
+    debugLog("app-folder.open-error", {
+      error: error?.message || String(error),
+    });
+  }
 });
 
 window.addEventListener("paste", async (event) => {
@@ -439,14 +452,15 @@ window.lanTunnel.onPairingStatus((status) => {
 
 window.lanTunnel.onPaired(({ peerUrl, peerName }) => {
   if (peerUrl) {
-    peerUrlInput.value = peerUrl;
+    activePeerUrl = peerUrl;
   }
-  setPairStatus(`Paired with ${peerName || "peer"}`);
+  renderPeers();
+  setStatus(`Paired with ${peerName || "peer"}`);
 });
 
 window.lanTunnel.onPairingCleared(({ reason }) => {
-  peerUrlInput.value = "";
-  setPairStatus("Not paired");
+  activePeerUrl = "";
+  renderPeers();
   setStatus(reason || "Pairing cleared.", true);
 });
 
@@ -466,8 +480,9 @@ pairAcceptBtn.addEventListener("click", async () => {
       requestId: currentPairRequest.requestId,
       accept: true,
     });
-    peerUrlInput.value = currentPairRequest.fromEndpoint;
-    setPairStatus(`Paired with ${currentPairRequest.fromName}`);
+    activePeerUrl = currentPairRequest.fromEndpoint;
+    renderPeers();
+    setStatus(`Paired with ${currentPairRequest.fromName}`);
   } catch (error) {
     setStatus(error.message || "Unable to accept pairing.", true);
   } finally {
@@ -496,35 +511,12 @@ pairDeclineBtn.addEventListener("click", async () => {
 async function init() {
   debugLog("init.start");
   const appInfo = await window.lanTunnel.appInfo();
-  endpoints = appInfo.localUrls;
   peers = appInfo.peers || [];
-  if (appInfo.activePeerUrl) {
-    peerUrlInput.value = appInfo.activePeerUrl;
-    setPairStatus(`Paired with ${appInfo.activePeerName || "peer"}`);
-  } else {
-    setPairStatus("Not paired");
-  }
+  activePeerUrl = appInfo.activePeerUrl || "";
 
   setupPanel.classList.add("hidden");
   pairRequestModal.classList.add("hidden");
   renderPeers();
-  localUrlList.innerHTML = "";
-  for (const url of endpoints) {
-    const li = document.createElement("li");
-    li.className = "url-item";
-    const code = document.createElement("code");
-    code.textContent = url;
-    li.appendChild(code);
-    const copyBtn = document.createElement("button");
-    copyBtn.textContent = "Copy";
-    copyBtn.className = "mini-btn";
-    copyBtn.addEventListener("click", async () => {
-      await window.lanTunnel.writeClipboard(url);
-      setStatus(`Copied ${url}`);
-    });
-    li.appendChild(copyBtn);
-    localUrlList.appendChild(li);
-  }
 
   await refreshReceivedArtifacts();
   peers = await window.lanTunnel.listPeers();
@@ -532,7 +524,6 @@ async function init() {
   setStatus("Ready for paste, drop, and drift.");
   debugLog("init.ready", {
     peerCount: peers.length,
-    endpointCount: endpoints.length,
   });
 }
 

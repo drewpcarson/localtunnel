@@ -11,6 +11,8 @@ const {
   clipboard,
   nativeImage,
   safeStorage,
+  shell,
+  Menu,
 } = require("electron");
 const { encryptBuffer, keyFingerprint } = require("./crypto");
 const { startServer } = require("./server");
@@ -34,16 +36,13 @@ const outgoingPairRequests = new Map();
 const incomingPairRequests = new Map();
 const dragExportDir = path.join(os.tmpdir(), "lan-paste-tunnel");
 let pairingStatePath = "";
-const DRAG_DEBUG_TAG = "[LT-DRAGDBG]";
+let backupsDirPath = "";
 const RECOVERY_FILE = "recovery-state.json";
 const RECOVERY_WINDOW_MS = 5 * 60 * 1000;
 const MAX_RECOVERY_RESTARTS = 3;
 let recoveryStatePath = "";
 
-function logDragDebug(message, context = {}) {
-  const stamp = new Date().toISOString();
-  console.log(`${DRAG_DEBUG_TAG} ${stamp} ${message}`, context);
-}
+function logDragDebug() {}
 
 function readRecoveryState() {
   try {
@@ -135,6 +134,46 @@ function sanitizeFileName(name, fallback) {
     .replace(/[. ]+$/g, "")
     .slice(0, 160);
   return cleaned || fallback;
+}
+
+function ensureBackupsDir() {
+  if (!backupsDirPath) {
+    return;
+  }
+  if (!fsSync.existsSync(backupsDirPath)) {
+    fsSync.mkdirSync(backupsDirPath, { recursive: true });
+    logDragDebug("backup.dir.created", { backupsDirPath });
+  }
+}
+
+async function backupReceivedFile(item) {
+  if (!item || item.type !== "file" || !item.bytes) {
+    return;
+  }
+
+  try {
+    ensureBackupsDir();
+    const now = new Date();
+    const stamp = now.toISOString().replace(/[:.]/g, "-");
+    const safeName = sanitizeFileName(
+      path.basename(item.fileName || ""),
+      `received-${item.id}`
+    );
+    const fileName = `${stamp}-${safeName}`;
+    const targetPath = path.join(backupsDirPath, fileName);
+    await fs.writeFile(targetPath, item.bytes);
+    logDragDebug("backup.file.saved", {
+      itemId: item.id,
+      fileName,
+      targetPath,
+      bytes: item.bytes.length,
+    });
+  } catch (error) {
+    logDragDebug("backup.file.error", {
+      itemId: item?.id,
+      error: error?.message || String(error),
+    });
+  }
 }
 
 function buildDragIconFromItem(item) {
@@ -401,6 +440,7 @@ function createWindow() {
     maxHeight: 420,
     resizable: false,
     title: "LAN Paste Tunnel",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -412,10 +452,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "win32" || process.platform === "linux") {
+    Menu.setApplicationMenu(null);
+  }
   recoveryStatePath = path.join(app.getPath("userData"), RECOVERY_FILE);
   resetRecoveryWindowIfStable();
   logDragDebug("app.ready", { platform: process.platform });
   pairingStatePath = path.join(app.getPath("userData"), "pairing-state.json");
+  backupsDirPath = path.join(app.getPath("userData"), "received-backups");
+  ensureBackupsDir();
   restorePairingState();
 
   const { localUrls: serverUrls } = startServer({
@@ -432,6 +477,9 @@ app.whenReady().then(() => {
           size: item.size,
           textPreview: item.type === "text" ? item.text : "",
         });
+      }
+      if (item.type === "file") {
+        void backupReceivedFile(item);
       }
     },
     onPairRequest: ({ requestId, fromName, fromEndpoint, proposedKey }) => {
@@ -565,11 +613,21 @@ ipcMain.handle("config:updateSharedKey", (_event, sharedKey) => {
 ipcMain.handle("app:info", () => {
   return {
     port: PORT,
-    localUrls,
     peers: discoveredPeers,
     activePeerUrl: state.activePeerUrl,
     activePeerName: state.activePeerName,
+    backupsDirPath,
   };
+});
+
+ipcMain.handle("app:openAppFolder", async () => {
+  const target = app.getPath("userData");
+  const result = await shell.openPath(target);
+  if (result) {
+    throw new Error(result);
+  }
+  logDragDebug("app.folder.opened", { target });
+  return { ok: true, path: target };
 });
 
 ipcMain.handle("transfer:sendText", async (_event, { peerUrl, text }) => {
@@ -722,10 +780,6 @@ ipcMain.handle("items:getDragFilePath", async (_event, itemId) => {
     });
     throw error;
   }
-});
-
-ipcMain.on("debug:log", (_event, payload) => {
-  logDragDebug("renderer", payload || {});
 });
 
 ipcMain.handle("clipboard:writeText", (_event, text) => {

@@ -197,15 +197,23 @@ body {
   border: 1px solid var(--panel-border);
   background: color-mix(in oklab, var(--panel) 82%, transparent);
   color: var(--text);
-  font-size: 14px;
-  line-height: 1;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.icon-btn img {
+  display: block;
+  filter: invert(1);
 }
 
 .icon-btn:hover {
   border-color: var(--line-bright);
   box-shadow: 0 0 10px rgba(140, 200, 255, 0.35);
 }
+
 
 .overlay-panel {
   position: absolute;
@@ -236,16 +244,6 @@ body {
   color: var(--muted);
 }
 
-.pair-status {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(8, 14, 34, 0.78);
-  color: var(--muted);
-  padding: 6px;
-  font-size: 11px;
-  margin-bottom: 8px;
-}
-
 .hidden {
   display: none;
 }
@@ -272,7 +270,6 @@ input {
   padding: 6px 7px;
 }
 
-.local-url-list,
 .peer-list,
 .received-list {
   list-style: none;
@@ -282,7 +279,10 @@ input {
   gap: 6px;
 }
 
-.url-item,
+.peer-list {
+  margin-bottom: 6px;
+}
+
 .peer-item,
 .received-item {
   border: 1px solid var(--line);
@@ -291,16 +291,15 @@ input {
   padding: 6px;
 }
 
-.url-item {
+.peer-item {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.peer-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.peer-item.active-peer {
+  border-color: var(--ok);
+  background: rgba(19, 44, 56, 0.78);
 }
 
 .peer-main {
@@ -313,16 +312,11 @@ input {
   color: var(--text);
 }
 
-.peer-endpoint {
-  font-size: 10px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.active-peer .peer-name {
+  color: var(--ok);
 }
 
-.url-item code {
-  flex: 1;
+.peer-endpoint {
   font-size: 10px;
   color: var(--muted);
   white-space: nowrap;
@@ -338,10 +332,32 @@ input {
   font-size: 10px;
   padding: 4px 6px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mini-btn:hover {
   border-color: var(--line-bright);
+}
+
+.mini-btn.paired-badge {
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+
+.mini-btn.paired-badge img {
+  filter: none !important;
+}
+
+.icon-only-btn {
+  padding: 4px;
+}
+
+.icon-only-btn img {
+  display: block;
+  filter: invert(1);
 }
 
 .received-item p {
