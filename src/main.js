@@ -3,6 +3,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
+const { execSync } = require("node:child_process");
 const {
   app,
   BrowserWindow,
@@ -48,6 +49,34 @@ function logDragDebug() {}
 function logWinDrop(message, context = {}) {
   const stamp = new Date().toISOString();
   console.log(`${WIN_DROP_TAG} ${stamp} ${message}`, context);
+}
+
+function getWindowsIntegrityLevel() {
+  if (process.platform !== "win32") {
+    return "non-windows";
+  }
+  try {
+    const output = execSync("whoami /groups", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    if (/High Mandatory Level/i.test(output)) {
+      return "high";
+    }
+    if (/System Mandatory Level/i.test(output)) {
+      return "system";
+    }
+    if (/Medium Mandatory Level/i.test(output)) {
+      return "medium";
+    }
+    if (/Low Mandatory Level/i.test(output)) {
+      return "low";
+    }
+    return "unknown";
+  } catch (_error) {
+    return "unknown";
+  }
 }
 
 function readRecoveryState() {
@@ -583,6 +612,10 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  logWinDrop("process.integrity", {
+    platform: process.platform,
+    integrityLevel: getWindowsIntegrityLevel(),
+  });
   logDragDebug("window.created", {
     width: 420,
     height: 420,
