@@ -640,6 +640,7 @@ async function init() {
   const appInfo = await window.lanTunnel.appInfo();
   peers = appInfo.peers || [];
   activePeerUrl = appInfo.activePeerUrl || "";
+  const windowsIntegrityLevel = String(appInfo.windowsIntegrityLevel || "");
 
   setupPanel.classList.add("hidden");
   pairRequestModal.classList.add("hidden");
@@ -654,7 +655,11 @@ async function init() {
   }, 500);
   peers = await window.lanTunnel.listPeers();
   renderPeers();
-  setStatus("Ready for paste, drop, and drift.");
+  if (isWindows && (windowsIntegrityLevel === "high" || windowsIntegrityLevel === "system")) {
+    setStatus("Run portal without Administrator privileges to allow drag-in.", true);
+  } else {
+    setStatus("Ready for paste, drop, and drift.");
+  }
   debugLog("init.ready", {
     peerCount: peers.length,
     activePeerUrl: activePeerUrl || "",

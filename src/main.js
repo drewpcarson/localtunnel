@@ -698,6 +698,7 @@ ipcMain.handle("app:info", () => {
     activePeerUrl: state.activePeerUrl,
     activePeerName: state.activePeerName,
     backupsDirPath,
+    windowsIntegrityLevel: getWindowsIntegrityLevel(),
   };
 });
 
