@@ -17,7 +17,7 @@ const {
 const { encryptBuffer, keyFingerprint } = require("./crypto");
 const { startServer } = require("./server");
 const { startDiscovery } = require("./discovery");
-const { getReceivedItem, listReceivedItems } = require("./store");
+const { getReceivedItem, listReceivedItems, removeReceivedItem } = require("./store");
 
 const PORT = 43827;
 const PAIR_TIMEOUT_MS = 30000;
@@ -621,7 +621,8 @@ ipcMain.handle("app:info", () => {
 });
 
 ipcMain.handle("app:openAppFolder", async () => {
-  const target = app.getPath("userData");
+  ensureBackupsDir();
+  const target = backupsDirPath || app.getPath("userData");
   const result = await shell.openPath(target);
   if (result) {
     throw new Error(result);
@@ -684,6 +685,12 @@ ipcMain.handle("transfer:sendFile", async (_event, { peerUrl, file }) => {
 
 ipcMain.handle("items:list", () => {
   return listReceivedItems();
+});
+
+ipcMain.handle("items:dismiss", (_event, itemId) => {
+  return {
+    removed: removeReceivedItem(itemId),
+  };
 });
 
 ipcMain.handle("items:saveFile", async (_event, itemId) => {

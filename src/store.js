@@ -28,8 +28,18 @@ function getReceivedItem(id) {
   return receivedItems.find((item) => item.id === id);
 }
 
+function removeReceivedItem(id) {
+  const idx = receivedItems.findIndex((item) => item.id === id);
+  if (idx < 0) {
+    return false;
+  }
+  receivedItems.splice(idx, 1);
+  return true;
+}
+
 module.exports = {
   addReceivedItem,
   getReceivedItem,
   listReceivedItems,
+  removeReceivedItem,
 };

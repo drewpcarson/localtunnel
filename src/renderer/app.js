@@ -17,6 +17,8 @@ let activePeerUrl = "";
 const dragPathCache = new Map();
 const isWindows = navigator.platform.toLowerCase().includes("win");
 let lastTextDragAt = 0;
+const ARTIFACT_LIFETIME_MS = 30000;
+let artifactTicker = null;
 
 function debugLog() {}
 
@@ -31,6 +33,36 @@ function hashValue(input) {
     hash = (hash * 31 + input.charCodeAt(i)) % 2147483647;
   }
   return Math.abs(hash);
+}
+
+function isItemAlive(item) {
+  return Date.now() - item.createdAt < ARTIFACT_LIFETIME_MS;
+}
+
+async function dismissItemFromUi(itemId) {
+  receivedItems = receivedItems.filter((item) => item.id !== itemId);
+  dragPathCache.delete(itemId);
+  renderOrbitArtifacts();
+  try {
+    await window.lanTunnel.dismissItem(itemId);
+  } catch (_error) {
+    // Keep UI responsive even if background dismissal fails.
+  }
+}
+
+function isItemAlive(item) {
+  return Date.now() - item.createdAt < ARTIFACT_LIFETIME_MS;
+}
+
+async function dismissItemFromUi(itemId) {
+  receivedItems = receivedItems.filter((item) => item.id !== itemId);
+  dragPathCache.delete(itemId);
+  renderOrbitArtifacts();
+  try {
+    await window.lanTunnel.dismissItem(itemId);
+  } catch (_error) {
+    // Keep UI responsive even if dismissal sync fails.
+  }
 }
 
 function artifactVarsFor(item, index) {
@@ -52,16 +84,12 @@ function artifactVarsFor(item, index) {
 }
 
 async function refreshReceivedArtifacts() {
-  debugLog("artifacts.refresh.start");
-  receivedItems = await window.lanTunnel.listItems();
+  receivedItems = (await window.lanTunnel.listItems()).filter(isItemAlive);
   for (const item of receivedItems) {
     if (item.type === "file" || item.type === "text") {
       void ensureDragPath(item.id);
     }
   }
-  debugLog("artifacts.refresh.done", {
-    count: receivedItems.length,
-  });
   renderOrbitArtifacts();
 }
 
@@ -121,11 +149,8 @@ function attachWindowsDownloadData(event, item) {
 
 function renderOrbitArtifacts() {
   orbitLayer.innerHTML = "";
+  receivedItems = receivedItems.filter(isItemAlive);
   const visible = receivedItems.slice(0, 14);
-  debugLog("artifacts.render", {
-    total: receivedItems.length,
-    visible: visible.length,
-  });
 
   for (const [index, item] of visible.entries()) {
     const orbitItem = document.createElement("div");
@@ -138,50 +163,45 @@ function renderOrbitArtifacts() {
     orbitItem.style.setProperty("--dur", `${vars.dur}s`);
     orbitItem.style.setProperty("--delay", `${vars.delay}s`);
 
+    const shell = document.createElement("div");
+    shell.className = "artifact-shell";
+    orbitItem.appendChild(shell);
+
+    const elapsedMs = Math.max(0, Date.now() - item.createdAt);
+    const remainingRatio = Math.max(0, 1 - elapsedMs / ARTIFACT_LIFETIME_MS);
+    const ring = document.createElement("div");
+    ring.className = "lifespan-ring";
+    ring.style.setProperty("--life-ratio", String(remainingRatio));
+    shell.appendChild(ring);
+
     if (item.type === "text") {
       const doc = document.createElement("button");
       doc.className = "artifact text";
       doc.title = "Copy text to clipboard";
       doc.draggable = true;
-      doc.innerHTML = `
-        <svg viewBox="0 0 64 78" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <rect x="8" y="6" width="48" height="66" rx="8" fill="#f8fbff" stroke="#89c6ff" stroke-width="2"/>
-          <polyline points="44,6 56,18 44,18" fill="#d7ecff" stroke="#89c6ff" stroke-width="2"/>
-          <line x1="17" y1="28" x2="47" y2="28" stroke="#6ca5db" stroke-width="3" stroke-linecap="round"/>
-          <line x1="17" y1="37" x2="47" y2="37" stroke="#6ca5db" stroke-width="3" stroke-linecap="round"/>
-          <line x1="17" y1="46" x2="39" y2="46" stroke="#6ca5db" stroke-width="3" stroke-linecap="round"/>
-          <circle cx="48" cy="58" r="8" fill="#7bd0ff"/>
-          <text x="48" y="61.5" text-anchor="middle" font-size="8" fill="#04304d" font-weight="700">TXT</text>
-        </svg>
-      `;
+      doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" />';
       doc.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
         lastTextDragAt = Date.now();
-        debugLog("artifact.text.dragstart", {
-          itemId: item.id,
-          textLength: (item.text || item.textPreview || "").length,
-        });
         if (isWindows) {
           attachWindowsDownloadData(event, item);
         } else {
           window.lanTunnel.startFileDrag(item.id);
         }
       });
-      doc.addEventListener("dragend", () => {
-        debugLog("artifact.text.dragend", { itemId: item.id });
+      doc.addEventListener("dragend", (event) => {
+        if (event.dataTransfer?.dropEffect && event.dataTransfer.dropEffect !== "none") {
+          void dismissItemFromUi(item.id);
+        }
       });
       doc.addEventListener("click", async () => {
         if (Date.now() - lastTextDragAt < 250) {
           return;
         }
-        debugLog("artifact.text.click-copy", {
-          itemId: item.id,
-          textLength: (item.text || item.textPreview || "").length,
-        });
         await window.lanTunnel.writeClipboard(item.text || item.textPreview || "");
         setStatus("Text artifact copied.");
       });
-      orbitItem.appendChild(doc);
+      shell.appendChild(doc);
     } else if (item.isImage && item.previewDataUrl) {
       const wrap = document.createElement("div");
       wrap.className = "artifact image";
@@ -193,22 +213,18 @@ function renderOrbitArtifacts() {
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
-        debugLog("artifact.image.dragstart", {
-          itemId: item.id,
-          fileName: item.fileName,
-          mimeType: item.mimeType,
-          preview: Boolean(item.previewDataUrl),
-        });
         if (isWindows) {
           attachWindowsDownloadData(event, item);
         } else {
           window.lanTunnel.startFileDrag(item.id);
         }
       });
-      wrap.addEventListener("dragend", () => {
-        debugLog("artifact.image.dragend", { itemId: item.id });
+      wrap.addEventListener("dragend", (event) => {
+        if (event.dataTransfer?.dropEffect && event.dataTransfer.dropEffect !== "none") {
+          void dismissItemFromUi(item.id);
+        }
       });
-      orbitItem.appendChild(wrap);
+      shell.appendChild(wrap);
     } else {
       const generic = document.createElement("div");
       generic.className = "artifact file-generic";
@@ -219,21 +235,18 @@ function renderOrbitArtifacts() {
       generic.title = `${name} - drag out to desktop`;
       generic.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "copy";
-        debugLog("artifact.file.dragstart", {
-          itemId: item.id,
-          fileName: item.fileName,
-          mimeType: item.mimeType,
-        });
         if (isWindows) {
           attachWindowsDownloadData(event, item);
         } else {
           window.lanTunnel.startFileDrag(item.id);
         }
       });
-      generic.addEventListener("dragend", () => {
-        debugLog("artifact.file.dragend", { itemId: item.id });
+      generic.addEventListener("dragend", (event) => {
+        if (event.dataTransfer?.dropEffect && event.dataTransfer.dropEffect !== "none") {
+          void dismissItemFromUi(item.id);
+        }
       });
-      orbitItem.appendChild(generic);
+      shell.appendChild(generic);
     }
 
     orbitLayer.appendChild(orbitItem);
@@ -423,7 +436,6 @@ dropZone.addEventListener("drop", async (event) => {
 });
 
 window.lanTunnel.onIncomingItem(async () => {
-  debugLog("incoming.item.event");
   await refreshReceivedArtifacts();
   setStatus("Artifact arrived.");
 });
@@ -441,10 +453,6 @@ window.lanTunnel.onPairingIncomingRequest((request) => {
 });
 
 window.lanTunnel.onPairingStatus((status) => {
-  debugLog("pairing.status", {
-    type: status?.type,
-    message: status?.message,
-  });
   if (status?.message) {
     setStatus(status.message, status.type === "rejected" || status.type === "timeout");
   }
@@ -465,7 +473,6 @@ window.lanTunnel.onPairingCleared(({ reason }) => {
 });
 
 window.lanTunnel.onRecoveryStatus((payload) => {
-  debugLog("recovery.status", payload || {});
   if (payload?.message) {
     setStatus(payload.message, payload.severity === "error");
   }
@@ -509,7 +516,6 @@ pairDeclineBtn.addEventListener("click", async () => {
 });
 
 async function init() {
-  debugLog("init.start");
   const appInfo = await window.lanTunnel.appInfo();
   peers = appInfo.peers || [];
   activePeerUrl = appInfo.activePeerUrl || "";
@@ -519,12 +525,15 @@ async function init() {
   renderPeers();
 
   await refreshReceivedArtifacts();
+  if (artifactTicker) {
+    clearInterval(artifactTicker);
+  }
+  artifactTicker = setInterval(() => {
+    renderOrbitArtifacts();
+  }, 500);
   peers = await window.lanTunnel.listPeers();
   renderPeers();
   setStatus("Ready for paste, drop, and drift.");
-  debugLog("init.ready", {
-    peerCount: peers.length,
-  });
 }
 
 init();

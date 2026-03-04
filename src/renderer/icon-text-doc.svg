@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 78" width="42" height="52">
+  <defs>
+    <linearGradient id="docFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f9fdff"/>
+      <stop offset="100%" stop-color="#d7ebff"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="6" width="48" height="66" rx="8" fill="url(#docFill)" stroke="#6baeff" stroke-width="2"/>
+  <path d="M44 6 L56 18 L44 18 Z" fill="#c1ddff" stroke="#6baeff" stroke-width="2"/>
+  <line x1="17" y1="28" x2="47" y2="28" stroke="#5f95d6" stroke-width="3" stroke-linecap="round"/>
+  <line x1="17" y1="37" x2="47" y2="37" stroke="#5f95d6" stroke-width="3" stroke-linecap="round"/>
+  <line x1="17" y1="46" x2="40" y2="46" stroke="#5f95d6" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="48" cy="58" r="8" fill="#7bd6ff"/>
+  <text x="48" y="61.3" text-anchor="middle" font-size="8" fill="#07314e" font-weight="700">TXT</text>
+</svg>

@@ -129,6 +129,8 @@ body {
   border-radius: 10px;
   box-shadow: 0 8px 14px rgba(0, 0, 0, 0.2);
   backdrop-filter: blur(3px);
+  position: relative;
+  z-index: 2;
 }
 
 .artifact:hover {
@@ -172,6 +174,36 @@ body {
   width: 42px;
   height: 52px;
   display: block;
+}
+
+.artifact.text img {
+  width: 42px;
+  height: 52px;
+  display: block;
+}
+
+.artifact-shell {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.lifespan-ring {
+  --life-ratio: 1;
+  position: absolute;
+  width: 70px;
+  height: 70px;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    conic-gradient(
+      var(--line-bright) calc(var(--life-ratio) * 360deg),
+      rgba(147, 227, 255, 0.12) 0deg
+    );
+  -webkit-mask: radial-gradient(circle, transparent 67%, black 69%);
+  mask: radial-gradient(circle, transparent 67%, black 69%);
+  opacity: 0.75;
 }
 
 .menu-overlay {
