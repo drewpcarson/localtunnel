@@ -432,6 +432,7 @@ window.addEventListener("paste", async (event) => {
 
 dropZone.addEventListener("dragover", (event) => {
   event.preventDefault();
+  event.stopPropagation();
   event.dataTransfer.dropEffect = "copy";
   dropZone.classList.add("drag-over");
   debugLog("dropzone.dragover", { key: "dropzone" }, 400);
@@ -462,6 +463,7 @@ async function handleInboundDrop(dataTransfer) {
 
 dropZone.addEventListener("drop", async (event) => {
   event.preventDefault();
+  event.stopPropagation();
   dropZone.classList.remove("drag-over");
   debugLog("dropzone.drop", {
     fileCount: event.dataTransfer?.files?.length || 0,
