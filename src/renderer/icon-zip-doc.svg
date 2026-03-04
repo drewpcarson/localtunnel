@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 78" width="42" height="52">
+  <defs>
+    <linearGradient id="folderBack" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff5d1"/>
+      <stop offset="100%" stop-color="#ffe082"/>
+    </linearGradient>
+    <linearGradient id="folderFront" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff9e6"/>
+      <stop offset="100%" stop-color="#ffeb99"/>
+    </linearGradient>
+  </defs>
+  
+  <path d="M8 26 L8 14 C8 11.8 9.8 10 12 10 L26 10 L32 16 L52 16 C54.2 16 56 17.8 56 20 L56 26 Z" fill="url(#folderBack)" stroke="#e5b244" stroke-width="2"/>
+  
+  <rect x="8" y="26" width="48" height="46" rx="4" fill="url(#folderFront)" stroke="#e5b244" stroke-width="2"/>
+  
+  <line x1="32" y1="26" x2="32" y2="48" stroke="#d69f38" stroke-width="3" stroke-dasharray="2 4" stroke-linecap="round"/>
+  <rect x="29" y="46" width="6" height="8" rx="2" fill="#d69f38"/>
+  <circle cx="32" cy="56" r="3" fill="#fff9e6" stroke="#d69f38" stroke-width="2"/>
+
+  <circle cx="48" cy="58" r="8" fill="#ffc859"/>
+  <text x="48" y="61.3" text-anchor="middle" font-size="8" fill="#5c3a00" font-weight="700">ZIP</text>
+</svg>

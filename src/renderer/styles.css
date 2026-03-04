@@ -170,13 +170,22 @@ body {
   place-items: center;
 }
 
+.artifact.file-zip {
+  width: 52px;
+  height: 62px;
+  cursor: grab;
+  display: grid;
+  place-items: center;
+}
+
 .artifact.text svg {
   width: 42px;
   height: 52px;
   display: block;
 }
 
-.artifact.text img {
+.artifact.text img,
+.artifact.file-zip img {
   width: 42px;
   height: 52px;
   display: block;
@@ -191,6 +200,29 @@ body {
   place-items: center;
 }
 
+@property --life-ratio {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --life-progress {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@keyframes artifact-life {
+  0% {
+    --life-ratio: 1;
+    --life-progress: 0;
+  }
+  100% {
+    --life-ratio: 0;
+    --life-progress: 1;
+  }
+}
+
 .artifact-progress-mask {
   --life-ratio: 1;
   --life-progress: 0;
@@ -199,6 +231,7 @@ body {
   border-radius: inherit;
   pointer-events: none;
   z-index: 3;
+  animation: artifact-life 30s linear forwards;
   background:
     conic-gradient(
       from -90deg,
@@ -223,6 +256,10 @@ body {
 }
 
 .artifact.file-generic .artifact-progress-mask {
+  border-radius: 10px;
+}
+
+.artifact.file-zip .artifact-progress-mask {
   border-radius: 10px;
 }
 
@@ -301,11 +338,15 @@ body {
 }
 
 .app-version-label {
-  margin: 0 0 8px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  margin: 0;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   color: var(--muted);
-  opacity: 0.9;
+  opacity: 0.72;
 }
 
 .hidden {
@@ -350,6 +391,7 @@ input {
 .update-actions {
   display: flex;
   justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .peer-item,
@@ -492,6 +534,27 @@ input {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+}
+
+.progress-container {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 180px;
+  height: 6px;
+  background: rgba(5, 11, 30, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  z-index: 6;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 0.1s linear;
 }
 
 .portal.drag-over .portal-ring {

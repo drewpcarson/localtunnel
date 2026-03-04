@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("lanTunnel", {
   appInfo: () => ipcRenderer.invoke("app:info"),
@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("lanTunnel", {
     ipcRenderer.invoke("config:updateSharedKey", sharedKey),
   sendText: (payload) => ipcRenderer.invoke("transfer:sendText", payload),
   sendFile: (payload) => ipcRenderer.invoke("transfer:sendFile", payload),
+  sendDirectory: (payload) => ipcRenderer.invoke("transfer:sendDirectory", payload),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   listItems: () => ipcRenderer.invoke("items:list"),
   dismissItem: (itemId) => ipcRenderer.invoke("items:dismiss", itemId),
   saveFile: (itemId) => ipcRenderer.invoke("items:saveFile", itemId),
@@ -57,5 +59,10 @@ contextBridge.exposeInMainWorld("lanTunnel", {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("app:updateStatus", listener);
     return () => ipcRenderer.removeListener("app:updateStatus", listener);
+  },
+  onTransferProgress: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("transfer:progress", listener);
+    return () => ipcRenderer.removeListener("transfer:progress", listener);
   },
 });

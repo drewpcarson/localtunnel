@@ -1,6 +1,6 @@
 {
   "name": "localtunnel",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -45,7 +45,8 @@
       {
         "provider": "github",
         "owner": "drewpcarson",
-        "repo": "localtunnel"
+        "repo": "localtunnel",
+        "releaseType": "release"
       }
     ]
   },
@@ -53,6 +54,7 @@
     "cors": "^2.8.6",
     "electron-updater": "^6.3.9",
     "express": "^5.2.1",
+    "jszip": "^3.10.1",
     "ws": "^8.19.0"
   },
   "devDependencies": {

@@ -11,6 +11,8 @@ const pairAcceptBtn = document.getElementById("pairAcceptBtn");
 const pairDeclineBtn = document.getElementById("pairDeclineBtn");
 const checkUpdatesBtn = document.getElementById("checkUpdatesBtn");
 const appVersionLabel = document.getElementById("appVersionLabel");
+const progressContainer = document.getElementById("progressContainer");
+const progressBar = document.getElementById("progressBar");
 
 let peers = [];
 let receivedItems = [];
@@ -23,12 +25,32 @@ const ARTIFACT_LIFETIME_MS = 30000;
 let artifactTicker = null;
 let updateReadyToInstall = false;
 let updatesEnabled = false;
+let activeLocalDragItemId = null;
+let localDragDroppedInPortal = false;
+const TUNNELED_NAME_MAX_CHARS = 24;
 
 function debugLog() {}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
   statusEl.style.color = isError ? "#ff9fba" : "#9cbad6";
+}
+
+function truncateStatusName(name, maxChars = TUNNELED_NAME_MAX_CHARS) {
+  const value = String(name || "").trim();
+  if (!value) {
+    return "untitled";
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const extensionMatch = value.match(/(\.[^./\\\s]{1,10})$/);
+  const extension = extensionMatch ? extensionMatch[1] : "";
+  const base = extension ? value.slice(0, -extension.length) : value;
+  const reserved = extension ? extension.length + 3 : 3;
+  const baseLimit = Math.max(6, maxChars - reserved);
+  return `${base.slice(0, baseLimit)}...${extension}`;
 }
 
 function hashValue(input) {
@@ -157,17 +179,14 @@ function markWindowDropAllowed(event, stopPropagation = false) {
   dropZone.classList.add("drag-over");
 }
 
-function appendPinwheelMask(target, remainingRatio) {
-  const progressRatio = Math.max(0, 1 - remainingRatio);
+function appendPinwheelMask(target, elapsedMs) {
   const mask = document.createElement("div");
   mask.className = "artifact-progress-mask";
-  mask.style.setProperty("--life-ratio", String(remainingRatio));
-  mask.style.setProperty("--life-progress", String(progressRatio));
+  mask.style.animationDelay = `-${elapsedMs}ms`;
   target.appendChild(mask);
 }
 
 function renderOrbitArtifacts() {
-  orbitLayer.innerHTML = "";
   receivedItems = receivedItems.filter(isItemAlive);
   const visible = receivedItems.slice(0, 14);
   debugLog("artifacts.render", {
@@ -175,9 +194,22 @@ function renderOrbitArtifacts() {
     visible: visible.length,
   }, 3000);
 
+  const existingIds = new Set(visible.map(item => item.id));
+  for (const child of Array.from(orbitLayer.children)) {
+    if (!existingIds.has(child.dataset.itemId)) {
+      child.remove();
+    }
+  }
+
   for (const [index, item] of visible.entries()) {
-    const orbitItem = document.createElement("div");
+    let orbitItem = orbitLayer.querySelector(`[data-item-id="${item.id}"]`);
+    if (orbitItem) {
+      continue;
+    }
+
+    orbitItem = document.createElement("div");
     orbitItem.className = "orbit-item";
+    orbitItem.dataset.itemId = item.id;
     const vars = artifactVarsFor(item, index);
     orbitItem.style.setProperty("--x", `${vars.x}%`);
     orbitItem.style.setProperty("--y", `${vars.y}%`);
@@ -191,7 +223,6 @@ function renderOrbitArtifacts() {
     orbitItem.appendChild(shell);
 
     const elapsedMs = Math.max(0, Date.now() - item.createdAt);
-    const remainingRatio = Math.max(0, 1 - elapsedMs / ARTIFACT_LIFETIME_MS);
 
     if (item.type === "text") {
       const doc = document.createElement("button");
@@ -200,6 +231,8 @@ function renderOrbitArtifacts() {
       doc.draggable = true;
       doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" draggable="false" />';
       doc.addEventListener("dragstart", (event) => {
+        activeLocalDragItemId = item.id;
+        localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
         lastTextDragAt = Date.now();
         debugLog("artifact.text.dragstart", {
@@ -213,6 +246,14 @@ function renderOrbitArtifacts() {
         }
       });
       doc.addEventListener("dragend", (event) => {
+        const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
+        if (activeLocalDragItemId === item.id) {
+          activeLocalDragItemId = null;
+          localDragDroppedInPortal = false;
+        }
+        if (droppedInsidePortal) {
+          return;
+        }
         debugLog("artifact.text.dragend", {
           itemId: item.id,
           dropEffect: event.dataTransfer?.dropEffect || "unknown",
@@ -228,7 +269,7 @@ function renderOrbitArtifacts() {
         await window.lanTunnel.writeClipboard(item.text || item.textPreview || "");
         setStatus("Text artifact copied.");
       });
-      appendPinwheelMask(doc, remainingRatio);
+      appendPinwheelMask(doc, elapsedMs);
       shell.appendChild(doc);
     } else if (item.isImage && item.previewDataUrl) {
       const wrap = document.createElement("div");
@@ -240,6 +281,8 @@ function renderOrbitArtifacts() {
       img.alt = item.fileName || "received image";
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
+        activeLocalDragItemId = item.id;
+        localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
         debugLog("artifact.image.dragstart", {
           itemId: item.id,
@@ -254,6 +297,14 @@ function renderOrbitArtifacts() {
         }
       });
       wrap.addEventListener("dragend", (event) => {
+        const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
+        if (activeLocalDragItemId === item.id) {
+          activeLocalDragItemId = null;
+          localDragDroppedInPortal = false;
+        }
+        if (droppedInsidePortal) {
+          return;
+        }
         debugLog("artifact.image.dragend", {
           itemId: item.id,
           dropEffect: event.dataTransfer?.dropEffect || "unknown",
@@ -262,17 +313,27 @@ function renderOrbitArtifacts() {
           void dismissItemFromUi(item.id);
         }
       });
-      appendPinwheelMask(wrap, remainingRatio);
+      appendPinwheelMask(wrap, elapsedMs);
       shell.appendChild(wrap);
     } else {
-      const generic = document.createElement("div");
-      generic.className = "artifact file-generic";
-      generic.draggable = true;
       const name = item.fileName || "FILE";
-      const ext = name.includes(".") ? name.split(".").pop().toUpperCase().slice(0, 5) : "FILE";
-      generic.textContent = ext;
+      const isZip = name.toLowerCase().endsWith(".zip") || item.mimeType === "application/zip";
+      
+      const generic = document.createElement("div");
+      generic.className = isZip ? "artifact file-zip" : "artifact file-generic";
+      generic.draggable = true;
       generic.title = `${name} - drag out to desktop`;
+      
+      if (isZip) {
+        generic.innerHTML = '<img src="./icon-zip-doc.svg" alt="Zip archive" width="42" height="52" draggable="false" />';
+      } else {
+        const ext = name.includes(".") ? name.split(".").pop().toUpperCase().slice(0, 5) : "FILE";
+        generic.textContent = ext;
+      }
+      
       generic.addEventListener("dragstart", (event) => {
+        activeLocalDragItemId = item.id;
+        localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
         debugLog("artifact.file.dragstart", {
           itemId: item.id,
@@ -287,6 +348,14 @@ function renderOrbitArtifacts() {
         }
       });
       generic.addEventListener("dragend", (event) => {
+        const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
+        if (activeLocalDragItemId === item.id) {
+          activeLocalDragItemId = null;
+          localDragDroppedInPortal = false;
+        }
+        if (droppedInsidePortal) {
+          return;
+        }
         debugLog("artifact.file.dragend", {
           itemId: item.id,
           dropEffect: event.dataTransfer?.dropEffect || "unknown",
@@ -295,7 +364,7 @@ function renderOrbitArtifacts() {
           void dismissItemFromUi(item.id);
         }
       });
-      appendPinwheelMask(generic, remainingRatio);
+      appendPinwheelMask(generic, elapsedMs);
       shell.appendChild(generic);
     }
 
@@ -391,7 +460,7 @@ async function sendFile(file) {
         bytes,
       },
     });
-    setStatus(`File tunneled: ${file.name}`);
+    setStatus(`File tunneled: ${truncateStatusName(file.name)}`);
     debugLog("transfer.send-file.success", {
       name: file?.name,
       bytes: bytes.length,
@@ -401,6 +470,76 @@ async function sendFile(file) {
       error: error?.message || String(error),
     });
     setStatus(error.message || "Failed to send file.", true);
+  }
+}
+
+function getDroppedDirectoryPayload(dataTransfer) {
+  if (!dataTransfer?.items?.length) {
+    return null;
+  }
+
+  for (const item of dataTransfer.items) {
+    if (item.kind !== "file") {
+      continue;
+    }
+    const entry = typeof item.webkitGetAsEntry === "function"
+      ? item.webkitGetAsEntry()
+      : null;
+    if (!entry?.isDirectory) {
+      continue;
+    }
+
+    const droppedFile = typeof item.getAsFile === "function"
+      ? item.getAsFile()
+      : null;
+    const droppedPath = window.lanTunnel.getPathForFile
+      ? window.lanTunnel.getPathForFile(droppedFile)
+      : droppedFile?.path;
+    if (typeof droppedPath !== "string" || !droppedPath) {
+      continue;
+    }
+
+    return {
+      directoryPath: droppedPath,
+      directoryName: entry.name || droppedFile.name || "",
+    };
+  }
+
+  return null;
+}
+
+async function sendDirectory({ directoryPath, directoryName }) {
+  try {
+    debugLog("transfer.send-directory.start", {
+      directoryName,
+      directoryPath,
+    });
+    const result = await window.lanTunnel.sendDirectory({
+      directoryPath,
+      directoryName,
+    });
+    progressContainer.classList.add("hidden");
+    progressBar.style.width = "0%";
+    const tunneledName = result?.fileName || `${directoryName || "folder"}.zip`;
+    const fileCount = typeof result?.fileCount === "number" ? result.fileCount : null;
+    if (fileCount !== null) {
+      setStatus(`Folder tunneled: ${truncateStatusName(tunneledName)} (${fileCount} files)`);
+    } else {
+      setStatus(`Folder tunneled: ${truncateStatusName(tunneledName)}`);
+    }
+    debugLog("transfer.send-directory.success", {
+      directoryName,
+      fileName: result?.fileName,
+      fileCount: result?.fileCount,
+    });
+  } catch (error) {
+    progressContainer.classList.add("hidden");
+    progressBar.style.width = "0%";
+    debugLog("transfer.send-directory.error", {
+      directoryName,
+      error: error?.message || String(error),
+    });
+    setStatus(error.message || "Failed to send folder.", true);
   }
 }
 
@@ -448,7 +587,10 @@ checkUpdatesBtn.addEventListener("click", async () => {
     }
 
     setStatus("Checking for updates...");
-    await window.lanTunnel.checkForUpdates();
+    const result = await window.lanTunnel.checkForUpdates();
+    if (result?.message) {
+      setStatus(result.message, result.ok === false);
+    }
   } catch (error) {
     setStatus(error.message || "Unable to update right now.", true);
   }
@@ -480,9 +622,19 @@ window.addEventListener("dragleave", (event) => {
 });
 
 async function handleInboundDrop(dataTransfer) {
+  if (activeLocalDragItemId) {
+    localDragDroppedInPortal = true;
+    return;
+  }
   if (!dataTransfer) {
     return;
   }
+  const droppedDirectory = getDroppedDirectoryPayload(dataTransfer);
+  if (droppedDirectory) {
+    await sendDirectory(droppedDirectory);
+    return;
+  }
+
   const file = dataTransfer.files?.[0];
   if (file) {
     await sendFile(file);
@@ -597,6 +749,22 @@ window.lanTunnel.onUpdateStatus((payload) => {
   }
 });
 
+if (window.lanTunnel.onTransferProgress) {
+  window.lanTunnel.onTransferProgress((payload) => {
+    if (payload.type === "zip") {
+      const percent = Math.round(payload.percent || 0);
+      if (percent < 100) {
+        progressContainer.classList.remove("hidden");
+        progressBar.style.width = `${percent}%`;
+        setStatus(`Compressing folder... ${percent}%`);
+      } else {
+        progressContainer.classList.add("hidden");
+        progressBar.style.width = "0%";
+      }
+    }
+  });
+}
+
 pairAcceptBtn.addEventListener("click", async () => {
   if (!currentPairRequest) {
     return;
@@ -640,7 +808,7 @@ async function init() {
   const appInfo = await window.lanTunnel.appInfo();
   peers = appInfo.peers || [];
   activePeerUrl = appInfo.activePeerUrl || "";
-  appVersionLabel.textContent = `Version: v${appInfo.appVersion || "unknown"}`;
+  appVersionLabel.textContent = `v${appInfo.appVersion || "unknown"}`;
   const windowsIntegrityLevel = String(appInfo.windowsIntegrityLevel || "");
   updatesEnabled = Boolean(appInfo.updatesEnabled);
 

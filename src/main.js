@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const { execSync } = require("node:child_process");
+const JSZip = require("jszip");
 const {
   app,
   BrowserWindow,
@@ -386,6 +387,68 @@ async function sendJson(url, endpoint, body) {
     }
     throw new Error(message);
   }
+}
+
+async function collectDirectoryFiles(rootPath, currentPath = rootPath, files = []) {
+  const entries = await fs.readdir(currentPath, { withFileTypes: true });
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const entry of entries) {
+    const absolutePath = path.join(currentPath, entry.name);
+    if (entry.isDirectory()) {
+      await collectDirectoryFiles(rootPath, absolutePath, files);
+      continue;
+    }
+    if (entry.isFile()) {
+      const relativePath = path.relative(rootPath, absolutePath).split(path.sep).join("/");
+      files.push({
+        absolutePath,
+        relativePath,
+      });
+    }
+  }
+
+  return files;
+}
+
+async function buildDirectoryZipArchive({ directoryPath, directoryName, onProgress }) {
+  const stats = await fs.stat(directoryPath);
+  if (!stats.isDirectory()) {
+    throw new Error("Dropped path is not a folder.");
+  }
+
+  const files = await collectDirectoryFiles(directoryPath);
+  if (!files.length) {
+    throw new Error("Folder is empty.");
+  }
+
+  const rootName = sanitizeFileName(directoryName, path.basename(directoryPath) || "folder");
+  const archiveName = `${rootName}.zip`;
+  const archiveRoot = rootName || "folder";
+  const zip = new JSZip();
+
+  for (const file of files) {
+    const bytes = await fs.readFile(file.absolutePath);
+    zip.file(`${archiveRoot}/${file.relativePath}`, bytes);
+  }
+
+  const archiveBytes = await zip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: {
+      level: 6,
+    },
+  }, (metadata) => {
+    if (onProgress) {
+      onProgress(metadata.percent);
+    }
+  });
+
+  return {
+    archiveName,
+    archiveBytes,
+    fileCount: files.length,
+  };
 }
 
 function notifyRenderer(channel, payload) {
@@ -820,7 +883,10 @@ ipcMain.handle("app:checkForUpdates", async () => {
         message: "No updates available.",
       };
     }
-    throw new Error("Unable to check for updates right now.");
+    return {
+      ok: false,
+      message: "Unable to check for updates right now.",
+    };
   }
 });
 
@@ -886,6 +952,51 @@ ipcMain.handle("transfer:sendFile", async (_event, { peerUrl, file }) => {
     throw error;
   }
   return { ok: true };
+});
+
+ipcMain.handle("transfer:sendDirectory", async (_event, { peerUrl, directoryPath, directoryName }) => {
+  const sharedKey = state.sharedKey;
+  if (!sharedKey || sharedKey.length < 8) {
+    throw new Error("Pair with a nearby device first.");
+  }
+
+  if (!directoryPath || typeof directoryPath !== "string") {
+    throw new Error("Invalid folder.");
+  }
+
+  const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
+  const { archiveName, archiveBytes, fileCount } = await buildDirectoryZipArchive({
+    directoryPath,
+    directoryName,
+    onProgress: (percent) => {
+      _event.sender.send("transfer:progress", { type: "zip", percent });
+    },
+  });
+  const payload = encryptBuffer(archiveBytes, sharedKey);
+
+  try {
+    await sendEncryptedJson(
+      url,
+      "/api/receive-file",
+      {
+        payload,
+        fileName: archiveName,
+        mimeType: "application/zip",
+      },
+      sharedKey
+    );
+  } catch (error) {
+    if (error.message === "Peer is not paired. Re-pair both portals.") {
+      clearPairingSession(error.message);
+    }
+    throw error;
+  }
+
+  return {
+    ok: true,
+    fileName: archiveName,
+    fileCount,
+  };
 });
 
 ipcMain.handle("items:list", () => {

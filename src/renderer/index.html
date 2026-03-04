@@ -22,7 +22,7 @@
 
       <section id="setupContent" class="overlay-panel hidden">
         <h2>Setup</h2>
-        <p id="appVersionLabel" class="app-version-label">Version: --</p>
+        <p id="appVersionLabel" class="app-version-label">--</p>
         <h3>Nearby devices</h3>
         <ul id="peerList" class="peer-list"></ul>
         <div class="update-actions">
@@ -45,6 +45,10 @@
           <button id="pairDeclineBtn" class="mini-btn">Decline</button>
         </div>
       </section>
+
+      <div id="progressContainer" class="progress-container hidden">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
 
       <p id="status" class="status"></p>
     </main>
