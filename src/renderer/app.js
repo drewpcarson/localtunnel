@@ -28,6 +28,7 @@ let updateReadyToInstall = false;
 let updatesEnabled = false;
 let activeLocalDragItemId = null;
 let localDragDroppedInPortal = false;
+let localDragResetTimer = 0;
 const TUNNELED_NAME_MAX_CHARS = 24;
 const artifactMotionStates = new Map();
 let artifactPhysicsRafId = 0;
@@ -58,6 +59,32 @@ function hideTransferProgress() {
   }
   progressContainer.classList.add("hidden");
   progressBar.style.width = "0%";
+}
+
+function beginLocalDragSession(itemId) {
+  activeLocalDragItemId = itemId;
+  localDragDroppedInPortal = false;
+  if (localDragResetTimer) {
+    clearTimeout(localDragResetTimer);
+  }
+  // Safety net: prevent a stuck drag flag from blocking future inbound drops.
+  localDragResetTimer = setTimeout(() => {
+    if (activeLocalDragItemId === itemId) {
+      activeLocalDragItemId = null;
+      localDragDroppedInPortal = false;
+    }
+  }, 6000);
+}
+
+function endLocalDragSession(itemId) {
+  if (!itemId || activeLocalDragItemId === itemId) {
+    activeLocalDragItemId = null;
+    localDragDroppedInPortal = false;
+  }
+  if (localDragResetTimer) {
+    clearTimeout(localDragResetTimer);
+    localDragResetTimer = 0;
+  }
 }
 
 function truncateStatusName(name, maxChars = TUNNELED_NAME_MAX_CHARS) {
@@ -213,6 +240,11 @@ function createArtifactMotionState(itemId, vars, element) {
 
 function attachArtifactMotionHandlers(target, state, item) {
   target.style.touchAction = "none";
+  const isNearWindowEdge = (x, y, inset = 8) =>
+    x <= inset
+    || y <= inset
+    || x >= window.innerWidth - inset
+    || y >= window.innerHeight - inset;
 
   target.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) {
@@ -230,6 +262,10 @@ function attachArtifactMotionHandlers(target, state, item) {
     state.movedPx = 0;
     state.vx = 0;
     state.vy = 0;
+    state.externalDragArmed = false;
+    if (isWindows && state.dragTarget) {
+      state.dragTarget.draggable = false;
+    }
     try {
       target.setPointerCapture(event.pointerId);
     } catch (_error) {
@@ -258,6 +294,11 @@ function attachArtifactMotionHandlers(target, state, item) {
     state.lastPointerTs = now;
     applyArtifactPosition(state);
 
+    if (isWindows && state.dragTarget) {
+      state.externalDragArmed = isNearWindowEdge(event.clientX, event.clientY);
+      state.dragTarget.draggable = state.externalDragArmed;
+    }
+
     if (
       !isWindows &&
       !state.externalDragRequested &&
@@ -275,13 +316,12 @@ function attachArtifactMotionHandlers(target, state, item) {
       } catch (_error) {
         // Ignore capture failures.
       }
-      activeLocalDragItemId = item.id;
-      localDragDroppedInPortal = false;
       debugLog("artifact.pointer.redelegate.start", {
         itemId: item.id,
         x: event.clientX,
         y: event.clientY,
       });
+      beginLocalDragSession(item.id);
       window.lanTunnel.startFileDrag(item.id);
     }
   });
@@ -295,6 +335,10 @@ function attachArtifactMotionHandlers(target, state, item) {
     }
     state.isDragging = false;
     state.pointerId = null;
+    if (isWindows && state.dragTarget) {
+      state.dragTarget.draggable = true;
+      state.externalDragArmed = false;
+    }
     try {
       target.releasePointerCapture(event.pointerId);
     } catch (_error) {
@@ -608,10 +652,14 @@ function renderOrbitArtifacts() {
       doc.className = "artifact text";
       doc.title = linkUrl ? "Open link" : "Copy text to clipboard";
       doc.draggable = true;
+      motionState.dragTarget = doc;
       doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" draggable="false" />';
       doc.addEventListener("dragstart", (event) => {
-        activeLocalDragItemId = item.id;
-        localDragDroppedInPortal = false;
+        if (isWindows && !motionState.externalDragArmed) {
+          event.preventDefault();
+          return;
+        }
+        beginLocalDragSession(item.id);
         event.dataTransfer.effectAllowed = "copy";
         lastTextDragAt = Date.now();
         debugLog("artifact.text.dragstart", {
@@ -634,10 +682,7 @@ function renderOrbitArtifacts() {
       });
       doc.addEventListener("dragend", (event) => {
         const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
-        if (activeLocalDragItemId === item.id) {
-          activeLocalDragItemId = null;
-          localDragDroppedInPortal = false;
-        }
+        endLocalDragSession(item.id);
         if (droppedInsidePortal) {
           return;
         }
@@ -674,14 +719,18 @@ function renderOrbitArtifacts() {
       const wrap = document.createElement("div");
       wrap.className = "artifact image";
       wrap.draggable = true;
+      motionState.dragTarget = wrap;
       wrap.title = `${item.fileName} - drag out to desktop`;
       const img = document.createElement("img");
       img.src = item.previewDataUrl;
       img.alt = item.fileName || "received image";
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
-        activeLocalDragItemId = item.id;
-        localDragDroppedInPortal = false;
+        if (isWindows && !motionState.externalDragArmed) {
+          event.preventDefault();
+          return;
+        }
+        beginLocalDragSession(item.id);
         event.dataTransfer.effectAllowed = "copy";
         debugLog("artifact.image.dragstart", {
           itemId: item.id,
@@ -701,10 +750,7 @@ function renderOrbitArtifacts() {
       });
       wrap.addEventListener("dragend", (event) => {
         const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
-        if (activeLocalDragItemId === item.id) {
-          activeLocalDragItemId = null;
-          localDragDroppedInPortal = false;
-        }
+        endLocalDragSession(item.id);
         if (droppedInsidePortal) {
           return;
         }
@@ -733,6 +779,7 @@ function renderOrbitArtifacts() {
       }
       
       generic.draggable = true;
+      motionState.dragTarget = generic;
       generic.title = `${name} - drag out to desktop`;
       
       if (isZip) {
@@ -744,8 +791,11 @@ function renderOrbitArtifacts() {
       }
       
       generic.addEventListener("dragstart", (event) => {
-        activeLocalDragItemId = item.id;
-        localDragDroppedInPortal = false;
+        if (isWindows && !motionState.externalDragArmed) {
+          event.preventDefault();
+          return;
+        }
+        beginLocalDragSession(item.id);
         event.dataTransfer.effectAllowed = "copy";
         debugLog("artifact.file.dragstart", {
           itemId: item.id,
@@ -765,10 +815,7 @@ function renderOrbitArtifacts() {
       });
       generic.addEventListener("dragend", (event) => {
         const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
-        if (activeLocalDragItemId === item.id) {
-          activeLocalDragItemId = null;
-          localDragDroppedInPortal = false;
-        }
+        endLocalDragSession(item.id);
         if (droppedInsidePortal) {
           return;
         }
@@ -1042,13 +1089,15 @@ window.addEventListener("dragleave", (event) => {
 });
 
 async function handleInboundDrop(dataTransfer) {
+  if (!dataTransfer) {
+    return;
+  }
+
   if (activeLocalDragItemId) {
     localDragDroppedInPortal = true;
     return;
   }
-  if (!dataTransfer) {
-    return;
-  }
+
   const droppedDirectory = getDroppedDirectoryPayload(dataTransfer);
   if (droppedDirectory) {
     await sendDirectory(droppedDirectory);
