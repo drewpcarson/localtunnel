@@ -860,6 +860,27 @@ ipcMain.handle("app:openAppFolder", async () => {
   return { ok: true, path: target };
 });
 
+ipcMain.handle("app:openExternalUrl", async (_event, rawUrl) => {
+  const value = String(rawUrl || "").trim();
+  if (!value) {
+    throw new Error("URL is required.");
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (_error) {
+    throw new Error("Invalid URL.");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Only http/https links are supported.");
+  }
+
+  await shell.openExternal(parsed.toString());
+  return { ok: true };
+});
+
 ipcMain.handle("app:checkForUpdates", async () => {
   if (!app.isPackaged) {
     return {

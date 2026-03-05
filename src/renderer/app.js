@@ -93,6 +93,31 @@ function truncateArtifactLabel(name, maxChars = 12) {
   return `${base.slice(0, baseLimit)}...${extension}`;
 }
 
+function normalizeLinkFromText(text) {
+  const raw = String(text || "").trim();
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.toString();
+    }
+    return null;
+  } catch (_error) {
+    // Continue to non-protocol fallback.
+  }
+
+  if (/^www\./i.test(raw)) {
+    try {
+      return new URL(`https://${raw}`).toString();
+    } catch (_error) {
+      return null;
+    }
+  }
+  return null;
+}
+
 function hashValue(input) {
   let hash = 0;
   for (let i = 0; i < input.length; i += 1) {
@@ -186,15 +211,18 @@ function createArtifactMotionState(itemId, vars, element) {
   return state;
 }
 
-function attachArtifactMotionHandlers(target, state) {
+function attachArtifactMotionHandlers(target, state, item) {
   target.style.touchAction = "none";
 
   target.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.altKey) {
+    if (event.button !== 0) {
       return;
     }
-    event.preventDefault();
+    if (!isWindows) {
+      event.preventDefault();
+    }
     state.isDragging = true;
+    state.externalDragRequested = false;
     state.pointerId = event.pointerId;
     state.lastPointerX = event.clientX;
     state.lastPointerY = event.clientY;
@@ -229,6 +257,33 @@ function attachArtifactMotionHandlers(target, state) {
     state.lastPointerY = event.clientY;
     state.lastPointerTs = now;
     applyArtifactPosition(state);
+
+    if (
+      !isWindows &&
+      !state.externalDragRequested &&
+      (event.clientX <= 0
+        || event.clientY <= 0
+        || event.clientX >= window.innerWidth - 1
+        || event.clientY >= window.innerHeight - 1)
+    ) {
+      state.externalDragRequested = true;
+      state.isDragging = false;
+      state.pointerId = null;
+      state.suppressClickUntil = Date.now() + 220;
+      try {
+        target.releasePointerCapture(event.pointerId);
+      } catch (_error) {
+        // Ignore capture failures.
+      }
+      activeLocalDragItemId = item.id;
+      localDragDroppedInPortal = false;
+      debugLog("artifact.pointer.redelegate.start", {
+        itemId: item.id,
+        x: event.clientX,
+        y: event.clientY,
+      });
+      window.lanTunnel.startFileDrag(item.id);
+    }
   });
 
   const endDrag = (event) => {
@@ -537,7 +592,7 @@ function renderOrbitArtifacts() {
     orbitItem.style.setProperty("--delay", `${vars.delay}s`);
     const motionState = createArtifactMotionState(item.id, vars, orbitItem);
     artifactMotionStates.set(item.id, motionState);
-    attachArtifactMotionHandlers(orbitItem, motionState);
+    attachArtifactMotionHandlers(orbitItem, motionState, item);
 
     const shell = document.createElement("div");
     shell.className = "artifact-shell";
@@ -547,16 +602,14 @@ function renderOrbitArtifacts() {
     const elapsedMs = Math.max(0, Date.now() - item.createdAt);
 
     if (item.type === "text") {
+      const textValue = item.text || item.textPreview || "";
+      const linkUrl = normalizeLinkFromText(textValue);
       const doc = document.createElement("button");
       doc.className = "artifact text";
-      doc.title = "Copy text to clipboard";
+      doc.title = linkUrl ? "Open link" : "Copy text to clipboard";
       doc.draggable = true;
       doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" draggable="false" />';
       doc.addEventListener("dragstart", (event) => {
-        if (!event.altKey) {
-          event.preventDefault();
-          return;
-        }
         activeLocalDragItemId = item.id;
         localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
@@ -603,7 +656,16 @@ function renderOrbitArtifacts() {
         if (Date.now() - lastTextDragAt < 250) {
           return;
         }
-        await window.lanTunnel.writeClipboard(item.text || item.textPreview || "");
+        if (linkUrl) {
+          try {
+            await window.lanTunnel.openExternalUrl(linkUrl);
+            setStatus("Opened link.");
+          } catch (error) {
+            setStatus(error.message || "Unable to open link.", true);
+          }
+          return;
+        }
+        await window.lanTunnel.writeClipboard(textValue);
         setStatus("Text artifact copied.");
       });
       appendPinwheelMask(doc, elapsedMs);
@@ -618,10 +680,6 @@ function renderOrbitArtifacts() {
       img.alt = item.fileName || "received image";
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
-        if (!event.altKey) {
-          event.preventDefault();
-          return;
-        }
         activeLocalDragItemId = item.id;
         localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
@@ -686,10 +744,6 @@ function renderOrbitArtifacts() {
       }
       
       generic.addEventListener("dragstart", (event) => {
-        if (!event.altKey) {
-          event.preventDefault();
-          return;
-        }
         activeLocalDragItemId = item.id;
         localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
