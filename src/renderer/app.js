@@ -13,6 +13,7 @@ const checkUpdatesBtn = document.getElementById("checkUpdatesBtn");
 const appVersionLabel = document.getElementById("appVersionLabel");
 const progressContainer = document.getElementById("progressContainer");
 const progressBar = document.getElementById("progressBar");
+const portalParticlesCanvas = document.getElementById("portalParticles");
 
 let peers = [];
 let receivedItems = [];
@@ -28,6 +29,9 @@ let updatesEnabled = false;
 let activeLocalDragItemId = null;
 let localDragDroppedInPortal = false;
 const TUNNELED_NAME_MAX_CHARS = 24;
+const artifactMotionStates = new Map();
+let artifactPhysicsRafId = 0;
+let artifactPhysicsLastTs = 0;
 
 function debugLog() {}
 
@@ -70,6 +74,22 @@ function truncateStatusName(name, maxChars = TUNNELED_NAME_MAX_CHARS) {
   const base = extension ? value.slice(0, -extension.length) : value;
   const reserved = extension ? extension.length + 3 : 3;
   const baseLimit = Math.max(6, maxChars - reserved);
+  return `${base.slice(0, baseLimit)}...${extension}`;
+}
+
+function truncateArtifactLabel(name, maxChars = 12) {
+  const value = String(name || "").trim();
+  if (!value) {
+    return "artifact";
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+  const extensionMatch = value.match(/(\.[^./\\\s]{1,10})$/);
+  const extension = extensionMatch ? extensionMatch[1] : "";
+  const base = extension ? value.slice(0, -extension.length) : value;
+  const reserved = extension ? extension.length + 3 : 3;
+  const baseLimit = Math.max(4, maxChars - reserved);
   return `${base.slice(0, baseLimit)}...${extension}`;
 }
 
@@ -117,6 +137,283 @@ function artifactVarsFor(item, index) {
     dur,
     delay,
   };
+}
+
+function getArtifactBounds() {
+  const rect = orbitLayer.getBoundingClientRect();
+  return {
+    width: Math.max(1, rect.width),
+    height: Math.max(1, rect.height),
+  };
+}
+
+function clampArtifactState(state) {
+  const bounds = getArtifactBounds();
+  const margin = 34;
+  state.x = Math.min(bounds.width - margin, Math.max(margin, state.x));
+  state.y = Math.min(bounds.height - margin, Math.max(margin, state.y));
+}
+
+function applyArtifactPosition(state) {
+  if (!state.element) {
+    return;
+  }
+  state.element.style.left = `${state.x}px`;
+  state.element.style.top = `${state.y}px`;
+}
+
+function createArtifactMotionState(itemId, vars, element) {
+  const bounds = getArtifactBounds();
+  const state = {
+    itemId,
+    element,
+    x: (vars.x / 100) * bounds.width,
+    y: (vars.y / 100) * bounds.height,
+    vx: vars.dx * 0.06,
+    vy: vars.dy * 0.06,
+    driftPhaseX: Math.random() * Math.PI * 2,
+    driftPhaseY: Math.random() * Math.PI * 2,
+    isDragging: false,
+    pointerId: null,
+    lastPointerX: 0,
+    lastPointerY: 0,
+    lastPointerTs: 0,
+    movedPx: 0,
+    suppressClickUntil: 0,
+  };
+  clampArtifactState(state);
+  applyArtifactPosition(state);
+  return state;
+}
+
+function attachArtifactMotionHandlers(target, state) {
+  target.style.touchAction = "none";
+
+  target.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    state.isDragging = true;
+    state.pointerId = event.pointerId;
+    state.lastPointerX = event.clientX;
+    state.lastPointerY = event.clientY;
+    state.lastPointerTs = performance.now();
+    state.movedPx = 0;
+    state.vx = 0;
+    state.vy = 0;
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch (_error) {
+      // Ignore capture failures.
+    }
+  });
+
+  target.addEventListener("pointermove", (event) => {
+    if (!state.isDragging || state.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const now = performance.now();
+    const dt = Math.max(1, now - state.lastPointerTs);
+    const dx = event.clientX - state.lastPointerX;
+    const dy = event.clientY - state.lastPointerY;
+    state.x += dx;
+    state.y += dy;
+    state.movedPx += Math.hypot(dx, dy);
+    clampArtifactState(state);
+    // Velocity in px per ~frame.
+    state.vx = dx / (dt / 16.67);
+    state.vy = dy / (dt / 16.67);
+    state.lastPointerX = event.clientX;
+    state.lastPointerY = event.clientY;
+    state.lastPointerTs = now;
+    applyArtifactPosition(state);
+  });
+
+  const endDrag = (event) => {
+    if (!state.isDragging || state.pointerId !== event.pointerId) {
+      return;
+    }
+    if (state.movedPx > 6) {
+      state.suppressClickUntil = Date.now() + 220;
+    }
+    state.isDragging = false;
+    state.pointerId = null;
+    try {
+      target.releasePointerCapture(event.pointerId);
+    } catch (_error) {
+      // Ignore capture failures.
+    }
+  };
+
+  target.addEventListener("pointerup", endDrag);
+  target.addEventListener("pointercancel", endDrag);
+}
+
+function ensureArtifactPhysicsLoop() {
+  if (artifactPhysicsRafId) {
+    return;
+  }
+  const step = (ts) => {
+    if (!artifactPhysicsLastTs) {
+      artifactPhysicsLastTs = ts;
+    }
+    const dt = Math.min(34, ts - artifactPhysicsLastTs);
+    artifactPhysicsLastTs = ts;
+    const dtFrames = dt / 16.67;
+    const bounds = getArtifactBounds();
+    const margin = 34;
+
+    for (const state of artifactMotionStates.values()) {
+      if (!state.element || !state.element.isConnected) {
+        continue;
+      }
+      if (!state.isDragging) {
+        state.driftPhaseX += 0.024 * dtFrames;
+        state.driftPhaseY += 0.018 * dtFrames;
+        state.vx += Math.sin(state.driftPhaseX) * 0.012 * dtFrames;
+        state.vy += Math.cos(state.driftPhaseY) * 0.01 * dtFrames;
+        state.vx *= Math.pow(0.94, dtFrames);
+        state.vy *= Math.pow(0.94, dtFrames);
+        state.x += state.vx * dtFrames;
+        state.y += state.vy * dtFrames;
+
+        if (state.x < margin) {
+          state.x = margin;
+          state.vx *= -0.55;
+        } else if (state.x > bounds.width - margin) {
+          state.x = bounds.width - margin;
+          state.vx *= -0.55;
+        }
+        if (state.y < margin) {
+          state.y = margin;
+          state.vy *= -0.55;
+        } else if (state.y > bounds.height - margin) {
+          state.y = bounds.height - margin;
+          state.vy *= -0.55;
+        }
+      }
+      applyArtifactPosition(state);
+    }
+    artifactPhysicsRafId = window.requestAnimationFrame(step);
+  };
+  artifactPhysicsRafId = window.requestAnimationFrame(step);
+}
+
+function initPortalParticles() {
+  if (!portalParticlesCanvas) {
+    return;
+  }
+  const ctx = portalParticlesCanvas.getContext("2d", { alpha: true });
+  if (!ctx) {
+    return;
+  }
+
+  const particles = [];
+  let width = 0;
+  let height = 0;
+  let rafId = 0;
+  const PARTICLE_COUNT = 48;
+  const WARMUP_MS = 5000;
+
+  const seedParticle = () => ({
+      x: Math.random(),
+      y: 0.92 + Math.random() * 0.1,
+      vx: (Math.random() - 0.5) * 0.00005,
+      vy: -(0.000025 + Math.random() * 0.000055),
+      r: 0.7 + Math.random() * 1.8,
+      hue: 190 + Math.random() * 90,
+      alpha: 0.18 + Math.random() * 0.32,
+      twinkle: Math.random() * Math.PI * 2,
+  });
+
+  const respawnParticle = (particle) => {
+    const replacement = seedParticle();
+    particle.x = replacement.x;
+    particle.y = replacement.y;
+    particle.vx = replacement.vx;
+    particle.vy = replacement.vy;
+    particle.r = replacement.r;
+    particle.hue = replacement.hue;
+    particle.alpha = replacement.alpha;
+    particle.twinkle = replacement.twinkle;
+  };
+
+  const advanceParticle = (particle, elapsedMs) => {
+    const steps = Math.max(1, Math.floor(elapsedMs / 16.67));
+    const stepMs = elapsedMs / steps;
+    for (let i = 0; i < steps; i += 1) {
+      const driftScale = stepMs / 16.67;
+      particle.x += particle.vx * driftScale * 60;
+      particle.y += particle.vy * driftScale * 60;
+      particle.twinkle += 0.02 * driftScale;
+      if (particle.x < -0.08) particle.x = 1.08;
+      if (particle.x > 1.08) particle.x = -0.08;
+      if (particle.y < -0.08) {
+        respawnParticle(particle);
+      }
+    }
+  };
+
+  const resetCanvasSize = () => {
+    const rect = portalParticlesCanvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    width = Math.max(1, rect.width);
+    height = Math.max(1, rect.height);
+    portalParticlesCanvas.width = Math.round(width * dpr);
+    portalParticlesCanvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+
+  for (let i = 0; i < PARTICLE_COUNT; i += 1) {
+    const particle = seedParticle();
+    // Start as if animation has been running for a while to avoid an initial burst from the bottom.
+    advanceParticle(particle, Math.random() * WARMUP_MS);
+    particles.push(particle);
+  }
+  resetCanvasSize();
+  window.addEventListener("resize", resetCanvasSize);
+
+  let lastTs = 0;
+  const tick = (ts) => {
+    if (!lastTs) {
+      lastTs = ts;
+    }
+    const dt = Math.min(33, ts - lastTs);
+    lastTs = ts;
+    const driftScale = dt / 16.67;
+
+    ctx.clearRect(0, 0, width, height);
+    for (const p of particles) {
+      p.x += p.vx * driftScale * 60;
+      p.y += p.vy * driftScale * 60;
+      p.twinkle += 0.02 * driftScale;
+
+      if (p.x < -0.08) p.x = 1.08;
+      if (p.x > 1.08) p.x = -0.08;
+      if (p.y < -0.08) {
+        respawnParticle(p);
+      }
+
+      const px = p.x * width;
+      const py = p.y * height;
+      const flicker = 0.78 + Math.sin(p.twinkle) * 0.22;
+      ctx.fillStyle = `hsla(${p.hue}, 95%, 78%, ${p.alpha * flicker})`;
+      ctx.beginPath();
+      ctx.arc(px, py, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    rafId = window.requestAnimationFrame(tick);
+  };
+
+  rafId = window.requestAnimationFrame(tick);
+  window.addEventListener("beforeunload", () => {
+    if (rafId) {
+      window.cancelAnimationFrame(rafId);
+    }
+    window.removeEventListener("resize", resetCanvasSize);
+  });
 }
 
 async function refreshReceivedArtifacts() {
@@ -217,6 +514,7 @@ function renderOrbitArtifacts() {
   const existingIds = new Set(visible.map(item => item.id));
   for (const child of Array.from(orbitLayer.children)) {
     if (!existingIds.has(child.dataset.itemId)) {
+      artifactMotionStates.delete(child.dataset.itemId);
       child.remove();
     }
   }
@@ -237,10 +535,14 @@ function renderOrbitArtifacts() {
     orbitItem.style.setProperty("--dy", `${vars.dy}px`);
     orbitItem.style.setProperty("--dur", `${vars.dur}s`);
     orbitItem.style.setProperty("--delay", `${vars.delay}s`);
+    const motionState = createArtifactMotionState(item.id, vars, orbitItem);
+    artifactMotionStates.set(item.id, motionState);
+    attachArtifactMotionHandlers(orbitItem, motionState);
 
     const shell = document.createElement("div");
     shell.className = "artifact-shell";
     orbitItem.appendChild(shell);
+    const labelName = item.type === "text" ? "text-note.txt" : (item.fileName || "artifact");
 
     const elapsedMs = Math.max(0, Date.now() - item.createdAt);
 
@@ -251,6 +553,10 @@ function renderOrbitArtifacts() {
       doc.draggable = true;
       doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" draggable="false" />';
       doc.addEventListener("dragstart", (event) => {
+        if (!event.altKey) {
+          event.preventDefault();
+          return;
+        }
         activeLocalDragItemId = item.id;
         localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
@@ -291,6 +597,9 @@ function renderOrbitArtifacts() {
         }
       });
       doc.addEventListener("click", async () => {
+        if (motionState.suppressClickUntil > Date.now()) {
+          return;
+        }
         if (Date.now() - lastTextDragAt < 250) {
           return;
         }
@@ -309,6 +618,10 @@ function renderOrbitArtifacts() {
       img.alt = item.fileName || "received image";
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
+        if (!event.altKey) {
+          event.preventDefault();
+          return;
+        }
         activeLocalDragItemId = item.id;
         localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
@@ -369,11 +682,14 @@ function renderOrbitArtifacts() {
       } else if (isExe) {
         generic.innerHTML = '<img src="./icon-exe-doc.svg" alt="Executable" width="42" height="52" draggable="false" />';
       } else {
-        const ext = name.includes(".") ? name.split(".").pop().toUpperCase().slice(0, 5) : "FILE";
-        generic.textContent = ext;
+        generic.innerHTML = '<img src="./icon-file-doc.svg" alt="File document" width="42" height="52" draggable="false" />';
       }
       
       generic.addEventListener("dragstart", (event) => {
+        if (!event.altKey) {
+          event.preventDefault();
+          return;
+        }
         activeLocalDragItemId = item.id;
         localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
@@ -413,6 +729,12 @@ function renderOrbitArtifacts() {
       appendPinwheelMask(generic, elapsedMs);
       shell.appendChild(generic);
     }
+
+    const label = document.createElement("div");
+    label.className = "artifact-label";
+    label.textContent = truncateArtifactLabel(labelName);
+    label.title = labelName;
+    orbitItem.appendChild(label);
 
     orbitLayer.appendChild(orbitItem);
   }
@@ -846,6 +1168,8 @@ pairDeclineBtn.addEventListener("click", async () => {
 });
 
 async function init() {
+  initPortalParticles();
+  ensureArtifactPhysicsLoop();
   installGlobalDropTargets();
   debugLog("init.start", { platform: navigator.platform });
   const appInfo = await window.lanTunnel.appInfo();
