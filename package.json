@@ -1,6 +1,6 @@
 {
   "name": "portal",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -8,7 +8,10 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win nsis",
-    "dist:win:publish": "electron-builder --win nsis --x64 --publish always"
+    "dist:win:publish": "electron-builder --win nsis --x64 --publish always",
+    "dist:mac": "electron-builder --mac dmg zip",
+    "dist:mac:publish": "electron-builder --mac dmg zip --publish always",
+    "dist:all:publish": "electron-builder --win nsis --x64 --mac dmg zip --publish always"
   },
   "keywords": [],
   "author": "",

@@ -131,9 +131,10 @@ body {
 
 .orbit-item {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: var(--x, 50%);
+  top: var(--y, 50%);
   transform: translate(-50%, -50%);
+  animation: float-drift var(--dur, 22s) ease-in-out var(--delay, 0s) infinite alternate;
   pointer-events: auto;
   display: flex;
   flex-direction: column;

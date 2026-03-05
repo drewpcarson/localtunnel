@@ -23,6 +23,8 @@ const { getReceivedItem, listReceivedItems, removeReceivedItem } = require("./st
 
 const PORT = 43827;
 const PAIR_TIMEOUT_MS = 30000;
+const CLIPBOARD_POLL_INTERVAL_MS = 500;
+const CLIPBOARD_SUPPRESS_WINDOW_MS = 5000;
 const state = {
   sharedKey: "",
   activePeerUrl: "",
@@ -45,6 +47,10 @@ const MAX_RECOVERY_RESTARTS = 3;
 let recoveryStatePath = "";
 let updateReadyToInstall = false;
 let updaterInstance = null;
+let clipboardMonitorInterval = null;
+let clipboardCheckInFlight = false;
+let lastClipboardHash = "";
+const suppressedClipboardHashes = new Map();
 
 function logDragDebug() {}
 
@@ -389,6 +395,110 @@ async function sendJson(url, endpoint, body) {
   }
 }
 
+function hashClipboardText(text) {
+  return crypto.createHash("sha256").update(String(text || ""), "utf8").digest("hex");
+}
+
+function markClipboardTextSuppressed(text) {
+  const value = String(text || "");
+  if (!value) {
+    return;
+  }
+  const hash = hashClipboardText(value);
+  suppressedClipboardHashes.set(hash, Date.now() + CLIPBOARD_SUPPRESS_WINDOW_MS);
+}
+
+function pruneSuppressedClipboardHashes(now = Date.now()) {
+  for (const [hash, expiresAt] of suppressedClipboardHashes) {
+    if (expiresAt <= now) {
+      suppressedClipboardHashes.delete(hash);
+    }
+  }
+}
+
+async function sendTextToPeer(peerUrl, text) {
+  const sharedKey = state.sharedKey;
+  if (!sharedKey || sharedKey.length < 8) {
+    throw new Error("Pair with a nearby device first.");
+  }
+
+  const rawText = String(text || "");
+  if (!rawText.trim()) {
+    throw new Error("Text is empty.");
+  }
+
+  const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
+  const payload = encryptBuffer(Buffer.from(rawText, "utf8"), sharedKey);
+  try {
+    await sendEncryptedJson(url, "/api/receive-text", { payload }, sharedKey);
+  } catch (error) {
+    if (error.message === "Peer is not paired. Re-pair both portals.") {
+      clearPairingSession(error.message);
+    }
+    throw error;
+  }
+}
+
+async function checkClipboardForAutoSend() {
+  if (clipboardCheckInFlight) {
+    return;
+  }
+  clipboardCheckInFlight = true;
+  try {
+    pruneSuppressedClipboardHashes();
+    const text = String(clipboard.readText() || "");
+    if (!text) {
+      lastClipboardHash = "";
+      return;
+    }
+
+    const currentHash = hashClipboardText(text);
+    if (currentHash === lastClipboardHash) {
+      return;
+    }
+    lastClipboardHash = currentHash;
+
+    if (suppressedClipboardHashes.has(currentHash)) {
+      return;
+    }
+    if (!state.activePeerUrl || !state.sharedKey || state.sharedKey.length < 8) {
+      return;
+    }
+    if (!text.trim()) {
+      return;
+    }
+
+    await sendTextToPeer(state.activePeerUrl, text);
+  } catch (_error) {
+    // Clipboard polling should never crash the app.
+  } finally {
+    clipboardCheckInFlight = false;
+  }
+}
+
+function startClipboardMonitor() {
+  if (clipboardMonitorInterval) {
+    return;
+  }
+  try {
+    const initialText = String(clipboard.readText() || "");
+    lastClipboardHash = initialText ? hashClipboardText(initialText) : "";
+  } catch (_error) {
+    lastClipboardHash = "";
+  }
+  clipboardMonitorInterval = setInterval(() => {
+    void checkClipboardForAutoSend();
+  }, CLIPBOARD_POLL_INTERVAL_MS);
+}
+
+function stopClipboardMonitor() {
+  if (!clipboardMonitorInterval) {
+    return;
+  }
+  clearInterval(clipboardMonitorInterval);
+  clipboardMonitorInterval = null;
+}
+
 async function collectDirectoryFiles(rootPath, currentPath = rootPath, files = []) {
   const entries = await fs.readdir(currentPath, { withFileTypes: true });
   entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -667,6 +777,7 @@ app.whenReady().then(() => {
   backupsDirPath = path.join(app.getPath("userData"), "received-backups");
   ensureBackupsDir();
   restorePairingState();
+  startClipboardMonitor();
 
   const { localUrls: serverUrls } = startServer({
     port: PORT,
@@ -829,6 +940,10 @@ app.on("window-all-closed", () => {
   }
 });
 
+app.on("before-quit", () => {
+  stopClipboardMonitor();
+});
+
 ipcMain.handle("config:updateSharedKey", (_event, sharedKey) => {
   state.sharedKey = String(sharedKey || "").trim();
   return {
@@ -858,27 +973,6 @@ ipcMain.handle("app:openAppFolder", async () => {
   }
   logDragDebug("app.folder.opened", { target });
   return { ok: true, path: target };
-});
-
-ipcMain.handle("app:openExternalUrl", async (_event, rawUrl) => {
-  const value = String(rawUrl || "").trim();
-  if (!value) {
-    throw new Error("URL is required.");
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch (_error) {
-    throw new Error("Invalid URL.");
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Only http/https links are supported.");
-  }
-
-  await shell.openExternal(parsed.toString());
-  return { ok: true };
 });
 
 ipcMain.handle("app:checkForUpdates", async () => {
@@ -923,22 +1017,30 @@ ipcMain.handle("app:installUpdate", () => {
   return { ok: true };
 });
 
-ipcMain.handle("transfer:sendText", async (_event, { peerUrl, text }) => {
-  const sharedKey = state.sharedKey;
-  if (!sharedKey || sharedKey.length < 8) {
-    throw new Error("Pair with a nearby device first.");
+ipcMain.handle("app:openExternal", async (_event, rawUrl) => {
+  const candidate = String(rawUrl || "").trim();
+  if (!candidate) {
+    throw new Error("URL is required.");
   }
 
-  const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
-  const payload = encryptBuffer(Buffer.from(text, "utf8"), sharedKey);
+  let parsed;
   try {
-    await sendEncryptedJson(url, "/api/receive-text", { payload }, sharedKey);
-  } catch (error) {
-    if (error.message === "Peer is not paired. Re-pair both portals.") {
-      clearPairingSession(error.message);
-    }
-    throw error;
+    parsed = new URL(candidate);
+  } catch (_error) {
+    throw new Error("Invalid URL.");
   }
+
+  const allowedProtocols = new Set(["http:", "https:", "mailto:"]);
+  if (!allowedProtocols.has(parsed.protocol)) {
+    throw new Error("Unsupported link type.");
+  }
+
+  await shell.openExternal(parsed.toString());
+  return { ok: true };
+});
+
+ipcMain.handle("transfer:sendText", async (_event, { peerUrl, text }) => {
+  await sendTextToPeer(peerUrl, text);
   return { ok: true };
 });
 
@@ -1184,7 +1286,10 @@ ipcMain.handle("items:getDragFilePath", async (_event, itemId) => {
 });
 
 ipcMain.handle("clipboard:writeText", (_event, text) => {
-  clipboard.writeText(String(text || ""));
+  const value = String(text || "");
+  markClipboardTextSuppressed(value);
+  lastClipboardHash = value ? hashClipboardText(value) : "";
+  clipboard.writeText(value);
   return { ok: true };
 });
 

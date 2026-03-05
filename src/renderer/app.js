@@ -28,11 +28,7 @@ let updateReadyToInstall = false;
 let updatesEnabled = false;
 let activeLocalDragItemId = null;
 let localDragDroppedInPortal = false;
-let localDragResetTimer = 0;
 const TUNNELED_NAME_MAX_CHARS = 24;
-const artifactMotionStates = new Map();
-let artifactPhysicsRafId = 0;
-let artifactPhysicsLastTs = 0;
 
 function debugLog() {}
 
@@ -59,32 +55,6 @@ function hideTransferProgress() {
   }
   progressContainer.classList.add("hidden");
   progressBar.style.width = "0%";
-}
-
-function beginLocalDragSession(itemId) {
-  activeLocalDragItemId = itemId;
-  localDragDroppedInPortal = false;
-  if (localDragResetTimer) {
-    clearTimeout(localDragResetTimer);
-  }
-  // Safety net: prevent a stuck drag flag from blocking future inbound drops.
-  localDragResetTimer = setTimeout(() => {
-    if (activeLocalDragItemId === itemId) {
-      activeLocalDragItemId = null;
-      localDragDroppedInPortal = false;
-    }
-  }, 6000);
-}
-
-function endLocalDragSession(itemId) {
-  if (!itemId || activeLocalDragItemId === itemId) {
-    activeLocalDragItemId = null;
-    localDragDroppedInPortal = false;
-  }
-  if (localDragResetTimer) {
-    clearTimeout(localDragResetTimer);
-    localDragResetTimer = 0;
-  }
 }
 
 function truncateStatusName(name, maxChars = TUNNELED_NAME_MAX_CHARS) {
@@ -120,29 +90,35 @@ function truncateArtifactLabel(name, maxChars = 12) {
   return `${base.slice(0, baseLimit)}...${extension}`;
 }
 
-function normalizeLinkFromText(text) {
-  const raw = String(text || "").trim();
-  if (!raw) {
-    return null;
-  }
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      return parsed.toString();
-    }
-    return null;
-  } catch (_error) {
-    // Continue to non-protocol fallback.
+function extractOpenableLink(input) {
+  const raw = String(input || "").trim();
+  if (!raw || /\s/.test(raw)) {
+    return "";
   }
 
-  if (/^www\./i.test(raw)) {
-    try {
-      return new URL(`https://${raw}`).toString();
-    } catch (_error) {
-      return null;
-    }
+  let candidate = raw;
+  if (/^www\./i.test(candidate)) {
+    candidate = `https://${candidate}`;
   }
-  return null;
+
+  if (!/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(candidate)) {
+    const looksLikeHost = /^[\w.-]+\.[a-z]{2,}(\/.*)?$/i.test(candidate);
+    if (!looksLikeHost) {
+      return "";
+    }
+    candidate = `https://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
+      return parsed.toString();
+    }
+  } catch (_error) {
+    // Ignore invalid URLs and treat as plain text.
+  }
+
+  return "";
 }
 
 function hashValue(input) {
@@ -189,215 +165,6 @@ function artifactVarsFor(item, index) {
     dur,
     delay,
   };
-}
-
-function getArtifactBounds() {
-  const rect = orbitLayer.getBoundingClientRect();
-  return {
-    width: Math.max(1, rect.width),
-    height: Math.max(1, rect.height),
-  };
-}
-
-function clampArtifactState(state) {
-  const bounds = getArtifactBounds();
-  const margin = 34;
-  state.x = Math.min(bounds.width - margin, Math.max(margin, state.x));
-  state.y = Math.min(bounds.height - margin, Math.max(margin, state.y));
-}
-
-function applyArtifactPosition(state) {
-  if (!state.element) {
-    return;
-  }
-  state.element.style.left = `${state.x}px`;
-  state.element.style.top = `${state.y}px`;
-}
-
-function createArtifactMotionState(itemId, vars, element) {
-  const bounds = getArtifactBounds();
-  const state = {
-    itemId,
-    element,
-    x: (vars.x / 100) * bounds.width,
-    y: (vars.y / 100) * bounds.height,
-    vx: vars.dx * 0.06,
-    vy: vars.dy * 0.06,
-    driftPhaseX: Math.random() * Math.PI * 2,
-    driftPhaseY: Math.random() * Math.PI * 2,
-    isDragging: false,
-    pointerId: null,
-    lastPointerX: 0,
-    lastPointerY: 0,
-    lastPointerTs: 0,
-    movedPx: 0,
-    suppressClickUntil: 0,
-  };
-  clampArtifactState(state);
-  applyArtifactPosition(state);
-  return state;
-}
-
-function attachArtifactMotionHandlers(target, state, item) {
-  target.style.touchAction = "none";
-  const isNearWindowEdge = (x, y, inset = 8) =>
-    x <= inset
-    || y <= inset
-    || x >= window.innerWidth - inset
-    || y >= window.innerHeight - inset;
-
-  target.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) {
-      return;
-    }
-    if (!isWindows) {
-      event.preventDefault();
-    }
-    state.isDragging = true;
-    state.externalDragRequested = false;
-    state.pointerId = event.pointerId;
-    state.lastPointerX = event.clientX;
-    state.lastPointerY = event.clientY;
-    state.lastPointerTs = performance.now();
-    state.movedPx = 0;
-    state.vx = 0;
-    state.vy = 0;
-    state.externalDragArmed = false;
-    if (isWindows && state.dragTarget) {
-      state.dragTarget.draggable = false;
-    }
-    try {
-      target.setPointerCapture(event.pointerId);
-    } catch (_error) {
-      // Ignore capture failures.
-    }
-  });
-
-  target.addEventListener("pointermove", (event) => {
-    if (!state.isDragging || state.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    const now = performance.now();
-    const dt = Math.max(1, now - state.lastPointerTs);
-    const dx = event.clientX - state.lastPointerX;
-    const dy = event.clientY - state.lastPointerY;
-    state.x += dx;
-    state.y += dy;
-    state.movedPx += Math.hypot(dx, dy);
-    clampArtifactState(state);
-    // Velocity in px per ~frame.
-    state.vx = dx / (dt / 16.67);
-    state.vy = dy / (dt / 16.67);
-    state.lastPointerX = event.clientX;
-    state.lastPointerY = event.clientY;
-    state.lastPointerTs = now;
-    applyArtifactPosition(state);
-
-    if (isWindows && state.dragTarget) {
-      state.externalDragArmed = isNearWindowEdge(event.clientX, event.clientY);
-      state.dragTarget.draggable = state.externalDragArmed;
-    }
-
-    if (
-      !isWindows &&
-      !state.externalDragRequested &&
-      (event.clientX <= 0
-        || event.clientY <= 0
-        || event.clientX >= window.innerWidth - 1
-        || event.clientY >= window.innerHeight - 1)
-    ) {
-      state.externalDragRequested = true;
-      state.isDragging = false;
-      state.pointerId = null;
-      state.suppressClickUntil = Date.now() + 220;
-      try {
-        target.releasePointerCapture(event.pointerId);
-      } catch (_error) {
-        // Ignore capture failures.
-      }
-      debugLog("artifact.pointer.redelegate.start", {
-        itemId: item.id,
-        x: event.clientX,
-        y: event.clientY,
-      });
-      beginLocalDragSession(item.id);
-      window.lanTunnel.startFileDrag(item.id);
-    }
-  });
-
-  const endDrag = (event) => {
-    if (!state.isDragging || state.pointerId !== event.pointerId) {
-      return;
-    }
-    if (state.movedPx > 6) {
-      state.suppressClickUntil = Date.now() + 220;
-    }
-    state.isDragging = false;
-    state.pointerId = null;
-    if (isWindows && state.dragTarget) {
-      state.dragTarget.draggable = true;
-      state.externalDragArmed = false;
-    }
-    try {
-      target.releasePointerCapture(event.pointerId);
-    } catch (_error) {
-      // Ignore capture failures.
-    }
-  };
-
-  target.addEventListener("pointerup", endDrag);
-  target.addEventListener("pointercancel", endDrag);
-}
-
-function ensureArtifactPhysicsLoop() {
-  if (artifactPhysicsRafId) {
-    return;
-  }
-  const step = (ts) => {
-    if (!artifactPhysicsLastTs) {
-      artifactPhysicsLastTs = ts;
-    }
-    const dt = Math.min(34, ts - artifactPhysicsLastTs);
-    artifactPhysicsLastTs = ts;
-    const dtFrames = dt / 16.67;
-    const bounds = getArtifactBounds();
-    const margin = 34;
-
-    for (const state of artifactMotionStates.values()) {
-      if (!state.element || !state.element.isConnected) {
-        continue;
-      }
-      if (!state.isDragging) {
-        state.driftPhaseX += 0.024 * dtFrames;
-        state.driftPhaseY += 0.018 * dtFrames;
-        state.vx += Math.sin(state.driftPhaseX) * 0.012 * dtFrames;
-        state.vy += Math.cos(state.driftPhaseY) * 0.01 * dtFrames;
-        state.vx *= Math.pow(0.94, dtFrames);
-        state.vy *= Math.pow(0.94, dtFrames);
-        state.x += state.vx * dtFrames;
-        state.y += state.vy * dtFrames;
-
-        if (state.x < margin) {
-          state.x = margin;
-          state.vx *= -0.55;
-        } else if (state.x > bounds.width - margin) {
-          state.x = bounds.width - margin;
-          state.vx *= -0.55;
-        }
-        if (state.y < margin) {
-          state.y = margin;
-          state.vy *= -0.55;
-        } else if (state.y > bounds.height - margin) {
-          state.y = bounds.height - margin;
-          state.vy *= -0.55;
-        }
-      }
-      applyArtifactPosition(state);
-    }
-    artifactPhysicsRafId = window.requestAnimationFrame(step);
-  };
-  artifactPhysicsRafId = window.requestAnimationFrame(step);
 }
 
 function initPortalParticles() {
@@ -613,7 +380,6 @@ function renderOrbitArtifacts() {
   const existingIds = new Set(visible.map(item => item.id));
   for (const child of Array.from(orbitLayer.children)) {
     if (!existingIds.has(child.dataset.itemId)) {
-      artifactMotionStates.delete(child.dataset.itemId);
       child.remove();
     }
   }
@@ -634,9 +400,6 @@ function renderOrbitArtifacts() {
     orbitItem.style.setProperty("--dy", `${vars.dy}px`);
     orbitItem.style.setProperty("--dur", `${vars.dur}s`);
     orbitItem.style.setProperty("--delay", `${vars.delay}s`);
-    const motionState = createArtifactMotionState(item.id, vars, orbitItem);
-    artifactMotionStates.set(item.id, motionState);
-    attachArtifactMotionHandlers(orbitItem, motionState, item);
 
     const shell = document.createElement("div");
     shell.className = "artifact-shell";
@@ -646,20 +409,16 @@ function renderOrbitArtifacts() {
     const elapsedMs = Math.max(0, Date.now() - item.createdAt);
 
     if (item.type === "text") {
-      const textValue = item.text || item.textPreview || "";
-      const linkUrl = normalizeLinkFromText(textValue);
+      const textPayload = item.text || item.textPreview || "";
+      const openableLink = extractOpenableLink(textPayload);
       const doc = document.createElement("button");
       doc.className = "artifact text";
-      doc.title = linkUrl ? "Open link" : "Copy text to clipboard";
+      doc.title = openableLink ? "Open link" : "Copy text to clipboard";
       doc.draggable = true;
-      motionState.dragTarget = doc;
       doc.innerHTML = '<img src="./icon-text-doc.svg" alt="Text document" width="42" height="52" draggable="false" />';
       doc.addEventListener("dragstart", (event) => {
-        if (isWindows && !motionState.externalDragArmed) {
-          event.preventDefault();
-          return;
-        }
-        beginLocalDragSession(item.id);
+        activeLocalDragItemId = item.id;
+        localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
         lastTextDragAt = Date.now();
         debugLog("artifact.text.dragstart", {
@@ -682,7 +441,10 @@ function renderOrbitArtifacts() {
       });
       doc.addEventListener("dragend", (event) => {
         const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
-        endLocalDragSession(item.id);
+        if (activeLocalDragItemId === item.id) {
+          activeLocalDragItemId = null;
+          localDragDroppedInPortal = false;
+        }
         if (droppedInsidePortal) {
           return;
         }
@@ -695,22 +457,19 @@ function renderOrbitArtifacts() {
         }
       });
       doc.addEventListener("click", async () => {
-        if (motionState.suppressClickUntil > Date.now()) {
-          return;
-        }
         if (Date.now() - lastTextDragAt < 250) {
           return;
         }
-        if (linkUrl) {
+        if (openableLink && window.lanTunnel.openExternal) {
           try {
-            await window.lanTunnel.openExternalUrl(linkUrl);
+            await window.lanTunnel.openExternal(openableLink);
             setStatus("Opened link.");
           } catch (error) {
             setStatus(error.message || "Unable to open link.", true);
           }
           return;
         }
-        await window.lanTunnel.writeClipboard(textValue);
+        await window.lanTunnel.writeClipboard(textPayload);
         setStatus("Text artifact copied.");
       });
       appendPinwheelMask(doc, elapsedMs);
@@ -719,18 +478,14 @@ function renderOrbitArtifacts() {
       const wrap = document.createElement("div");
       wrap.className = "artifact image";
       wrap.draggable = true;
-      motionState.dragTarget = wrap;
       wrap.title = `${item.fileName} - drag out to desktop`;
       const img = document.createElement("img");
       img.src = item.previewDataUrl;
       img.alt = item.fileName || "received image";
       wrap.appendChild(img);
       wrap.addEventListener("dragstart", (event) => {
-        if (isWindows && !motionState.externalDragArmed) {
-          event.preventDefault();
-          return;
-        }
-        beginLocalDragSession(item.id);
+        activeLocalDragItemId = item.id;
+        localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
         debugLog("artifact.image.dragstart", {
           itemId: item.id,
@@ -750,7 +505,10 @@ function renderOrbitArtifacts() {
       });
       wrap.addEventListener("dragend", (event) => {
         const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
-        endLocalDragSession(item.id);
+        if (activeLocalDragItemId === item.id) {
+          activeLocalDragItemId = null;
+          localDragDroppedInPortal = false;
+        }
         if (droppedInsidePortal) {
           return;
         }
@@ -779,7 +537,6 @@ function renderOrbitArtifacts() {
       }
       
       generic.draggable = true;
-      motionState.dragTarget = generic;
       generic.title = `${name} - drag out to desktop`;
       
       if (isZip) {
@@ -791,11 +548,8 @@ function renderOrbitArtifacts() {
       }
       
       generic.addEventListener("dragstart", (event) => {
-        if (isWindows && !motionState.externalDragArmed) {
-          event.preventDefault();
-          return;
-        }
-        beginLocalDragSession(item.id);
+        activeLocalDragItemId = item.id;
+        localDragDroppedInPortal = false;
         event.dataTransfer.effectAllowed = "copy";
         debugLog("artifact.file.dragstart", {
           itemId: item.id,
@@ -815,7 +569,10 @@ function renderOrbitArtifacts() {
       });
       generic.addEventListener("dragend", (event) => {
         const droppedInsidePortal = activeLocalDragItemId === item.id && localDragDroppedInPortal;
-        endLocalDragSession(item.id);
+        if (activeLocalDragItemId === item.id) {
+          activeLocalDragItemId = null;
+          localDragDroppedInPortal = false;
+        }
         if (droppedInsidePortal) {
           return;
         }
@@ -1089,15 +846,13 @@ window.addEventListener("dragleave", (event) => {
 });
 
 async function handleInboundDrop(dataTransfer) {
-  if (!dataTransfer) {
-    return;
-  }
-
   if (activeLocalDragItemId) {
     localDragDroppedInPortal = true;
     return;
   }
-
+  if (!dataTransfer) {
+    return;
+  }
   const droppedDirectory = getDroppedDirectoryPayload(dataTransfer);
   if (droppedDirectory) {
     await sendDirectory(droppedDirectory);
@@ -1272,7 +1027,6 @@ pairDeclineBtn.addEventListener("click", async () => {
 
 async function init() {
   initPortalParticles();
-  ensureArtifactPhysicsLoop();
   installGlobalDropTargets();
   debugLog("init.start", { platform: navigator.platform });
   const appInfo = await window.lanTunnel.appInfo();
