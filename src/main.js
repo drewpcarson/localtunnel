@@ -931,9 +931,25 @@ ipcMain.handle("transfer:sendFile", async (_event, { peerUrl, file }) => {
     throw new Error("Invalid file.");
   }
 
+  _event.sender.send("transfer:progress", {
+    kind: "send",
+    label: "Preparing file...",
+    percent: 10,
+  });
+
   const url = normalizePeerUrl(peerUrl || state.activePeerUrl);
   const bytes = Buffer.from(file.bytes);
+  _event.sender.send("transfer:progress", {
+    kind: "send",
+    label: "Encrypting file...",
+    percent: 45,
+  });
   const payload = encryptBuffer(bytes, sharedKey);
+  _event.sender.send("transfer:progress", {
+    kind: "send",
+    label: "Uploading file...",
+    percent: 80,
+  });
   try {
     await sendEncryptedJson(
       url,
@@ -945,7 +961,15 @@ ipcMain.handle("transfer:sendFile", async (_event, { peerUrl, file }) => {
       },
       sharedKey
     );
+    _event.sender.send("transfer:progress", {
+      kind: "done",
+      percent: 100,
+    });
   } catch (error) {
+    _event.sender.send("transfer:progress", {
+      kind: "error",
+      percent: 0,
+    });
     if (error.message === "Peer is not paired. Re-pair both portals.") {
       clearPairingSession(error.message);
     }
@@ -969,10 +993,25 @@ ipcMain.handle("transfer:sendDirectory", async (_event, { peerUrl, directoryPath
     directoryPath,
     directoryName,
     onProgress: (percent) => {
-      _event.sender.send("transfer:progress", { type: "zip", percent });
+      const scaled = Math.round(Math.min(85, (Number(percent) / 100) * 85));
+      _event.sender.send("transfer:progress", {
+        kind: "compress",
+        label: "Compressing folder...",
+        percent: scaled,
+      });
     },
   });
+  _event.sender.send("transfer:progress", {
+    kind: "send",
+    label: "Encrypting archive...",
+    percent: 90,
+  });
   const payload = encryptBuffer(archiveBytes, sharedKey);
+  _event.sender.send("transfer:progress", {
+    kind: "send",
+    label: "Uploading archive...",
+    percent: 96,
+  });
 
   try {
     await sendEncryptedJson(
@@ -985,7 +1024,15 @@ ipcMain.handle("transfer:sendDirectory", async (_event, { peerUrl, directoryPath
       },
       sharedKey
     );
+    _event.sender.send("transfer:progress", {
+      kind: "done",
+      percent: 100,
+    });
   } catch (error) {
+    _event.sender.send("transfer:progress", {
+      kind: "error",
+      percent: 0,
+    });
     if (error.message === "Peer is not paired. Re-pair both portals.") {
       clearPairingSession(error.message);
     }
@@ -1053,11 +1100,16 @@ ipcMain.on("items:startDrag", (event, itemId) => {
     }
     const exported = exportDragFile(item);
 
-    let icon = nativeImage.createFromPath(exported.path);
-    if (icon.isEmpty()) {
-      icon = buildDragIconFromItem(item);
+    let icon;
+    if (item.mimeType?.startsWith("image/")) {
+      icon = nativeImage.createFromPath(exported.path);
+      if (icon.isEmpty()) {
+        icon = buildDragIconFromItem(item);
+      } else {
+        icon = icon.resize({ width: 64, height: 64 });
+      }
     } else {
-      icon = icon.resize({ width: 64, height: 64 });
+      icon = buildDragIconFromItem(item);
     }
     logDragDebug("drag.startDrag.before", {
       itemId: item.id,

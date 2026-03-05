@@ -1,4 +1,45 @@
 const receivedItems = [];
+const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
+const WEB_NATIVE_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  "image/bmp",
+  "image/avif",
+]);
+
+function toImagePreviewDataUrl(item) {
+  if (
+    item.type !== "file"
+    || !item.mimeType?.startsWith("image/")
+    || !item.bytes
+    || item.size > MAX_PREVIEW_BYTES
+  ) {
+    return "";
+  }
+
+  const mimeType = String(item.mimeType || "").toLowerCase();
+  if (WEB_NATIVE_IMAGE_MIME_TYPES.has(mimeType)) {
+    return `data:${mimeType};base64,${item.bytes.toString("base64")}`;
+  }
+
+  // Fallback for formats the renderer may not decode directly (for example HEIC/HEIF):
+  // ask Electron to decode and re-encode as PNG data URL when possible.
+  try {
+    const { nativeImage } = require("electron");
+    const image = nativeImage.createFromBuffer(item.bytes);
+    if (!image.isEmpty()) {
+      return image.toDataURL();
+    }
+  } catch (_error) {
+    // Ignore decode failures and leave preview empty.
+  }
+
+  return "";
+}
 
 function addReceivedItem(item) {
   receivedItems.unshift(item);
@@ -15,12 +56,7 @@ function listReceivedItems() {
     text: item.type === "text" ? item.text : "",
     textPreview: item.type === "text" ? item.text.slice(0, 120) : "",
     isImage: item.type === "file" ? item.mimeType?.startsWith("image/") : false,
-    previewDataUrl:
-      item.type === "file" &&
-      item.mimeType?.startsWith("image/") &&
-      item.size <= 8 * 1024 * 1024
-        ? `data:${item.mimeType};base64,${item.bytes.toString("base64")}`
-        : "",
+    previewDataUrl: toImagePreviewDataUrl(item),
   }));
 }
 

@@ -36,6 +36,26 @@ function setStatus(message, isError = false) {
   statusEl.style.color = isError ? "#ff9fba" : "#9cbad6";
 }
 
+function showTransferProgress(percent, label) {
+  if (!progressContainer || !progressBar) {
+    return;
+  }
+  const clamped = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  progressContainer.classList.remove("hidden");
+  progressBar.style.width = `${clamped}%`;
+  if (label) {
+    setStatus(`${label} ${clamped}%`);
+  }
+}
+
+function hideTransferProgress() {
+  if (!progressContainer || !progressBar) {
+    return;
+  }
+  progressContainer.classList.add("hidden");
+  progressBar.style.width = "0%";
+}
+
 function truncateStatusName(name, maxChars = TUNNELED_NAME_MAX_CHARS) {
   const value = String(name || "").trim();
   if (!value) {
@@ -246,8 +266,11 @@ function renderOrbitArtifacts() {
             debugLog("artifact.text.dragstart.download-payload-missing", { itemId: item.id });
           }
         } else {
-          event.preventDefault();
-          window.lanTunnel.startFileDrag(item.id);
+          const payloadSet = attachDownloadData(event, item);
+          if (!payloadSet) {
+            event.preventDefault();
+            window.lanTunnel.startFileDrag(item.id);
+          }
         }
       });
       doc.addEventListener("dragend", (event) => {
@@ -298,8 +321,11 @@ function renderOrbitArtifacts() {
           attachDownloadData(event, item);
         } else {
           debugLog("artifact.image.dragstart.invoke-startFileDrag", { itemId: item.id });
-          event.preventDefault();
-          window.lanTunnel.startFileDrag(item.id);
+          const payloadSet = attachDownloadData(event, item);
+          if (!payloadSet) {
+            event.preventDefault();
+            window.lanTunnel.startFileDrag(item.id);
+          }
         }
       });
       wrap.addEventListener("dragend", (event) => {
@@ -324,14 +350,24 @@ function renderOrbitArtifacts() {
     } else {
       const name = item.fileName || "FILE";
       const isZip = name.toLowerCase().endsWith(".zip") || item.mimeType === "application/zip";
+      const isExe = name.toLowerCase().endsWith(".exe") || item.mimeType === "application/x-msdownload";
       
       const generic = document.createElement("div");
-      generic.className = isZip ? "artifact file-zip" : "artifact file-generic";
+      if (isZip) {
+        generic.className = "artifact file-zip";
+      } else if (isExe) {
+        generic.className = "artifact file-exe";
+      } else {
+        generic.className = "artifact file-generic";
+      }
+      
       generic.draggable = true;
       generic.title = `${name} - drag out to desktop`;
       
       if (isZip) {
         generic.innerHTML = '<img src="./icon-zip-doc.svg" alt="Zip archive" width="42" height="52" draggable="false" />';
+      } else if (isExe) {
+        generic.innerHTML = '<img src="./icon-exe-doc.svg" alt="Executable" width="42" height="52" draggable="false" />';
       } else {
         const ext = name.includes(".") ? name.split(".").pop().toUpperCase().slice(0, 5) : "FILE";
         generic.textContent = ext;
@@ -350,8 +386,11 @@ function renderOrbitArtifacts() {
           attachDownloadData(event, item);
         } else {
           debugLog("artifact.file.dragstart.invoke-startFileDrag", { itemId: item.id });
-          event.preventDefault();
-          window.lanTunnel.startFileDrag(item.id);
+          const payloadSet = attachDownloadData(event, item);
+          if (!payloadSet) {
+            event.preventDefault();
+            window.lanTunnel.startFileDrag(item.id);
+          }
         }
       });
       generic.addEventListener("dragend", (event) => {
@@ -525,8 +564,7 @@ async function sendDirectory({ directoryPath, directoryName }) {
       directoryPath,
       directoryName,
     });
-    progressContainer.classList.add("hidden");
-    progressBar.style.width = "0%";
+    hideTransferProgress();
     const tunneledName = result?.fileName || `${directoryName || "folder"}.zip`;
     const fileCount = typeof result?.fileCount === "number" ? result.fileCount : null;
     if (fileCount !== null) {
@@ -540,8 +578,7 @@ async function sendDirectory({ directoryPath, directoryName }) {
       fileCount: result?.fileCount,
     });
   } catch (error) {
-    progressContainer.classList.add("hidden");
-    progressBar.style.width = "0%";
+    hideTransferProgress();
     debugLog("transfer.send-directory.error", {
       directoryName,
       error: error?.message || String(error),
@@ -758,16 +795,15 @@ window.lanTunnel.onUpdateStatus((payload) => {
 
 if (window.lanTunnel.onTransferProgress) {
   window.lanTunnel.onTransferProgress((payload) => {
-    if (payload.type === "zip") {
-      const percent = Math.round(payload.percent || 0);
-      if (percent < 100) {
-        progressContainer.classList.remove("hidden");
-        progressBar.style.width = `${percent}%`;
-        setStatus(`Compressing folder... ${percent}%`);
-      } else {
-        progressContainer.classList.add("hidden");
-        progressBar.style.width = "0%";
-      }
+    if (!payload) {
+      return;
+    }
+    if (payload.kind === "error" || payload.kind === "done") {
+      hideTransferProgress();
+      return;
+    }
+    if (payload.kind === "compress" || payload.kind === "send") {
+      showTransferProgress(payload.percent, payload.label || "Processing...");
     }
   });
 }

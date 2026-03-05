@@ -170,7 +170,8 @@ body {
   place-items: center;
 }
 
-.artifact.file-zip {
+.artifact.file-zip,
+.artifact.file-exe {
   width: 52px;
   height: 62px;
   cursor: grab;
@@ -185,7 +186,8 @@ body {
 }
 
 .artifact.text img,
-.artifact.file-zip img {
+.artifact.file-zip img,
+.artifact.file-exe img {
   width: 42px;
   height: 52px;
   display: block;
@@ -260,6 +262,10 @@ body {
 }
 
 .artifact.file-zip .artifact-progress-mask {
+  border-radius: 10px;
+}
+
+.artifact.file-exe .artifact-progress-mask {
   border-radius: 10px;
 }
 
